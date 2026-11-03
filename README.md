@@ -109,17 +109,28 @@ certutil -hashfile WorkBuddyHelper-windows-amd64.exe SHA256
 
 **方式 A：直接拉取已构建镜像（推荐，无需本地 Go 环境）**
 
-每次打 `v*` 标签发布时，GitHub Actions 会自动构建并推送多架构镜像到 GitHub Container Registry：
+每次打 `v*` 标签发布时，GitHub Actions 会自动构建并推送多架构镜像到 GitHub Container Registry。
+镜像地址规则是 `ghcr.io/<仓库所有者>/workbuddy-helper`——推 `v*` 标签的是哪个仓库，镜像就推到哪个账号下：
 
 ```bash
+# 上游官方仓库
 docker pull ghcr.io/autumnsentiment/workbuddy-helper:latest
 # 或锁定具体版本
 docker pull ghcr.io/autumnsentiment/workbuddy-helper:1.0.8
+
+# 自己的 fork：在 fork 里打 tag 时，GITHUB_TOKEN 只能推送到自己命名空间
+docker pull ghcr.io/<你的GitHub用户名>/workbuddy-helper:latest
 ```
 
 镜像同时包含 `linux/amd64` 与 `linux/arm64` 两个架构，Docker 会自动选择匹配当前机器的版本。
 如需使用该镜像，把 `docker-compose.yml` 中的 `build: .` 注释掉、并将 `image:` 改为
-`ghcr.io/autumnsentiment/workbuddy-helper:latest` 即可。
+`ghcr.io/<仓库所有者>/workbuddy-helper:latest` 即可。
+
+> **自己触发构建时注意**：仓库 Settings → Actions → General 里需把 Workflow permissions 设为
+> **Read and write permissions**，否则 workflow 里的 `packages: write` 会被降级，推 GHCR 返回 403。
+> 首次构建出的 package 默认私有，需公开则在 Packages → workbuddy-helper → Package settings 里
+> Change visibility；不公开则先 `docker login ghcr.io`。也可以 Actions → Release → Run workflow
+> 手动构建（填版本号，仅推该版本与 `sha-` 标签，不打 `latest`）。
 
 **方式 B：本地构建镜像**
 
