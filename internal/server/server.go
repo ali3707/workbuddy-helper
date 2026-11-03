@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,42 +25,42 @@ import (
 type Server struct {
 	service           *service.Service
 	web               fs.FS
-	host              string
-	version           string
-	allowedHosts      []string
-	authUser          string
-	authPassword      string
-	authConfigured    bool
-	authMisconfigured bool
-	// panel 面板级账号密码认证（未设置 WBH_AUTH_USER/PASSWORD 时启用）
+	host         string
+	version      string
+	allowedHosts []string
+	// panel 面板级账号密码认证（统一使用页面登录，不再使用浏览器 Basic Auth）
 	panel   *auth.Manager
 	panelErr error
 	shutdown func()
 }
 
 func New(svc *service.Service, web fs.FS, host string, shutdown func()) *Server {
-	authUser := strings.TrimSpace(os.Getenv("WBH_AUTH_USER"))
-	authPassword := os.Getenv("WBH_AUTH_PASSWORD")
-	authConfigured := authUser != "" || authPassword != ""
 	srv := &Server{
-		service:           svc,
-		web:               web,
-		host:              host,
-		version:           buildVersion,
-		allowedHosts:      parseAllowedHosts(os.Getenv("WBH_ALLOWED_HOSTS")),
-		authUser:          authUser,
-		authPassword:      authPassword,
-		authConfigured:    authConfigured,
-		authMisconfigured: authConfigured && (authUser == "" || authPassword == ""),
-		shutdown:          shutdown,
+		service:      svc,
+		web:          web,
+		host:         host,
+		version:      buildVersion,
+		allowedHosts: parseAllowedHosts(os.Getenv("WBH_ALLOWED_HOSTS")),
+		shutdown:     shutdown,
 	}
-	// 环境变量 Basic Auth 已配置时不再叠加面板登录；否则默认要求面板账号密码。
-	if !authConfigured && svc != nil {
+	if svc != nil {
 		manager, err := auth.New(svc.DataDir())
 		if err != nil {
 			srv.panelErr = err
 		} else {
 			srv.panel = manager
+			// 环境变量不再触发浏览器 Basic Auth，而是作为面板账号的引导凭据：
+			// 每次启动同步到 data/auth.json，登录统一走页面内的面板登录。
+			user := strings.TrimSpace(os.Getenv("WBH_AUTH_USER"))
+			password := os.Getenv("WBH_AUTH_PASSWORD")
+			switch {
+			case user != "" && password != "":
+				if err := manager.SetCredentials(user, password); err != nil {
+					log.Printf("WBH_AUTH_USER/PASSWORD 无法用于初始化面板账号: %v", err)
+				}
+			case user != "" || password != "":
+				log.Printf("WBH_AUTH_USER 与 WBH_AUTH_PASSWORD 需同时设置，已忽略不完整的环境变量凭据")
+			}
 		}
 	}
 	return srv
@@ -100,39 +99,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/shutdown", s.handleShutdown)
 	mux.HandleFunc("/api/accounts/", s.handleAccount)
 	mux.HandleFunc("/", s.handleWeb)
-	return s.securityHeaders(s.basicAuth(s.hostGuard(s.csrf(s.panelAuth(mux)))))
-}
-
-// basicAuth is opt-in so local desktop use remains frictionless. When both
-// WBH_AUTH_USER and WBH_AUTH_PASSWORD are set, every route except healthz is
-// protected before the app token/CSRF checks run.
-func (s *Server) basicAuth(next http.Handler) http.Handler {
-	if !s.authConfigured {
-		return next
-	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.authMisconfigured {
-			status := http.StatusInternalServerError
-			if r.URL.Path == "/healthz" {
-				status = http.StatusServiceUnavailable
-			}
-			writeError(w, status, "WBH_AUTH_USER 与 WBH_AUTH_PASSWORD 必须同时设置")
-			return
-		}
-		if r.URL.Path == "/healthz" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		user, password, ok := r.BasicAuth()
-		userOK := ok && subtle.ConstantTimeCompare([]byte(user), []byte(s.authUser)) == 1
-		passwordOK := ok && subtle.ConstantTimeCompare([]byte(password), []byte(s.authPassword)) == 1
-		if !userOK || !passwordOK {
-			w.Header().Set("WWW-Authenticate", `Basic realm="WorkBuddy Helper"`)
-			writeError(w, http.StatusUnauthorized, "需要登录面板")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+	return s.securityHeaders(s.hostGuard(s.csrf(s.panelAuth(mux))))
 }
 
 // hostGuard prevents a DNS-rebinding page from loading the local UI under an

@@ -48,7 +48,7 @@
   - **国际版**：直连或代理（设置面板可配，协议 `socks5`/`socks5h`/`http`/`https`，支持认证）。代理独立持久化到 `data/proxy.conf`（容器重建/数据迁移不丢），**仅对国际版链路生效**。
   - 解析兜底：国际版直连路径解析失败时自动回退固定公共 DNS 再解析。
 - **每日定时**：可开启每日北京时间自动执行，**国内版签到与国际版活跃同时进行**（两套账号列表各自每日执行一次，互不阻塞，需程序/容器保持运行）。
-- **面板登录**：首次访问初始化管理员账号密码，之后需登录才能查看/操作（7 天滑动会话，HttpOnly Cookie，进程重启后需重新登录，失败 5 次限流 5 分钟）；也可用 `WBH_AUTH_USER`/`WBH_AUTH_PASSWORD` 走 Basic Auth。
+- **面板登录**：首次访问初始化管理员账号密码，之后需登录才能查看/操作（7 天滑动会话，HttpOnly Cookie，进程重启后需重新登录，失败 5 次限流 5 分钟）。用 `WBH_AUTH_USER`/`WBH_AUTH_PASSWORD` 可直接指定面板账号（不再使用浏览器 Basic Auth）。
 - **本地看板**：响应式 Web 界面、页面内登录（直接内嵌官方登录页）、运行日志、账号启停、显示名编辑。
 - **账号备份**：支持导出/导入账号（口令派生的 AES-256-GCM 加密 JSON，含令牌），导入按「版本 + UID」去重，可跨设备或容器迁移。
 - **双加密后端**：Windows 用 DPAPI，Linux/容器用 `key.bin` + AES-256-GCM。
@@ -181,7 +181,7 @@ docker run -d --name workbuddy-helper --restart unless-stopped \
 
 > **安全提示**：看板包含账号令牌，默认要求**面板账号密码登录**（首次访问时初始化）。即便如此，映射到 `0.0.0.0` 时仍建议只在内网使用，并配合 HTTPS 反向代理；通过反向代理域名访问时，同时设置 `WBH_ALLOWED_HOSTS`，例如 `panel.example.com:8443`。
 
-也可以用环境变量 Basic Auth 替代面板登录：同时设置 `WBH_AUTH_USER` 与 `WBH_AUTH_PASSWORD` 后，浏览器首次访问会弹出登录框，且不再要求面板账号（适合不方便做首次初始化的容器部署）；`/healthz` 保留匿名访问供 Docker 健康检查使用。Basic Auth 本身不加密传输，跨网络访问时仍应放在 HTTPS 反向代理后。密码不会写入 `state.bin`，请通过容器环境变量或 secret 注入，不要提交到仓库。
+面板账号也可以直接用环境变量指定：同时设置 `WBH_AUTH_USER` 与 `WBH_AUTH_PASSWORD` 后，每次启动会把它们同步为面板账号（口令哈希写入 `data/auth.json`），打开页面用同样的账号密码登录即可，**不会再弹浏览器的 Basic Auth 框**。不设置这两个变量时，首次访问在页面上初始化。`/healthz` 保留匿名访问供 Docker 健康检查使用；跨网络访问建议放在 HTTPS 反向代理后。密码不会写入 `state.bin`，请通过容器环境变量或 secret 注入，不要提交到仓库。
 
 > **注意**：容器内 `WBH_HOST` 必须为 `0.0.0.0`，否则 Docker 端口映射（DNAT 到容器 eth0）无法投递到仅监听回环的进程。
 
@@ -234,8 +234,8 @@ workbuddy-helper [选项]
 | `WBH_DATA` | Windows：`%LOCALAPPDATA%\WorkBuddyHelper`<br>容器：`/data` | 数据目录 |
 | `WBH_HOST` | `127.0.0.1` | 监听地址；容器内需为 `0.0.0.0` |
 | `WBH_ALLOWED_HOSTS` | 空 | 反向代理域名白名单，逗号分隔（例如 `panel.example.com:8443`）；通配监听默认只接受 IP/localhost |
-| `WBH_AUTH_USER` | 空 | 内置 Basic Auth 用户名；需与 `WBH_AUTH_PASSWORD` 同时设置才启用 |
-| `WBH_AUTH_PASSWORD` | 空 | 内置 Basic Auth 密码；建议通过 Docker secret 或受保护的环境注入 |
+| `WBH_AUTH_USER` | 空 | 面板登录用户名；与 `WBH_AUTH_PASSWORD` 同时设置时作为面板账号（每次启动同步） |
+| `WBH_AUTH_PASSWORD` | 空 | 面板登录密码；建议通过 Docker secret 或受保护的环境注入 |
 | `TZ` | 容器内 `Asia/Shanghai` | 时区（定时任务按北京时间计算，内部固定使用 UTC+8） |
 
 ---
@@ -403,6 +403,10 @@ A：签到与积分使用 WorkBuddy 客户端当前调用的 billing 接口；�
 ---
 
 ## 更新日志
+
+### 未发布
+
+- **取消浏览器 Basic Auth**：`WBH_AUTH_USER` / `WBH_AUTH_PASSWORD` 不再触发原生登录框，而是在每次启动时同步为**面板账号**，统一使用页面内的面板登录；面板账号已存在时以环境变量为准（改密码只需改环境变量并重启）。不完整的环境变量配置会被忽略并记录日志，首次访问仍在页面上初始化。
 
 ### v1.0.9（2026-11-03）
 

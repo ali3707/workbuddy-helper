@@ -104,23 +104,10 @@ func (m *Manager) Username() string {
 
 // Setup 首次设置面板账号；已初始化时返回 ErrAlreadySetup。
 func (m *Manager) Setup(username, password string) error {
-	username = strings.TrimSpace(username)
-	if err := validateCredentials(username, password); err != nil {
+	next, err := buildRecord(username, password)
+	if err != nil {
 		return err
 	}
-	salt := make([]byte, saltSize)
-	if _, err := rand.Read(salt); err != nil {
-		return err
-	}
-	hash := secret.PBKDF2SHA256([]byte(password), salt, iterations, keyLen)
-	next := record{
-		Username:   username,
-		Salt:       base64.StdEncoding.EncodeToString(salt),
-		Hash:       base64.StdEncoding.EncodeToString(hash),
-		Iterations: iterations,
-		UpdatedAt:  time.Now(),
-	}
-
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.configuredLocked() {
@@ -131,6 +118,42 @@ func (m *Manager) Setup(username, password string) error {
 	}
 	m.rec = next
 	return nil
+}
+
+// SetCredentials 用环境变量引导面板账号（每次启动同步），不受已初始化限制。
+// 密码变更后旧会话全部失效。
+func (m *Manager) SetCredentials(username, password string) error {
+	next, err := buildRecord(username, password)
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.saveLocked(next); err != nil {
+		return err
+	}
+	m.rec = next
+	m.sessions = make(map[string]time.Time)
+	return nil
+}
+
+func buildRecord(username, password string) (record, error) {
+	username = strings.TrimSpace(username)
+	if err := validateCredentials(username, password); err != nil {
+		return record{}, err
+	}
+	salt := make([]byte, saltSize)
+	if _, err := rand.Read(salt); err != nil {
+		return record{}, err
+	}
+	hash := secret.PBKDF2SHA256([]byte(password), salt, iterations, keyLen)
+	return record{
+		Username:   username,
+		Salt:       base64.StdEncoding.EncodeToString(salt),
+		Hash:       base64.StdEncoding.EncodeToString(hash),
+		Iterations: iterations,
+		UpdatedAt:  time.Now(),
+	}, nil
 }
 
 // Login 校验口令并创建会话，返回会话令牌。

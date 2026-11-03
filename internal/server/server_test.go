@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -39,10 +40,15 @@ func authenticatedHandler(t *testing.T, svc *service.Service, web fs.FS, host st
 	if srv.panel == nil {
 		return handler
 	}
-	if err := srv.panel.Setup("tester", "tester-password"); err != nil {
+	username, password := "tester", "tester-password"
+	if srv.panel.Configured() {
+		// 已由 WBH_AUTH_USER/PASSWORD 引导
+		username = os.Getenv("WBH_AUTH_USER")
+		password = os.Getenv("WBH_AUTH_PASSWORD")
+	} else if err := srv.panel.Setup(username, password); err != nil {
 		t.Fatal(err)
 	}
-	token, err := srv.panel.Login("tester", "tester-password", "127.0.0.1")
+	token, err := srv.panel.Login(username, password, "127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,50 +176,89 @@ func TestHealthzContractAndSecurityHeaders(t *testing.T) {
 	}
 }
 
-func TestOptionalBasicAuthProtectsPanelButNotHealthz(t *testing.T) {
+func TestEnvCredentialsBootstrapPanelLogin(t *testing.T) {
 	t.Setenv("WBH_AUTH_USER", "admin")
-	t.Setenv("WBH_AUTH_PASSWORD", "secret")
-	_, handler := testServer(t)
+	t.Setenv("WBH_AUTH_PASSWORD", "env-password")
+	svc, err := service.New(store.New(t.TempDir()), client.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html><head></head></html>")}}
+	handler := New(svc, web, "", nil).Handler()
 
-	unauthenticated := httptest.NewRequest(http.MethodGet, "/api/state", nil)
-	unauthenticatedW := httptest.NewRecorder()
-	handler.ServeHTTP(unauthenticatedW, unauthenticated)
-	if unauthenticatedW.Code != http.StatusUnauthorized || unauthenticatedW.Header().Get("WWW-Authenticate") == "" {
-		t.Fatalf("missing basic auth challenge: status=%d headers=%v", unauthenticatedW.Code, unauthenticatedW.Header())
+	// 不再使用浏览器 Basic Auth：未登录只返回 401 JSON，不发 WWW-Authenticate
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/state", nil))
+	if w.Code != http.StatusUnauthorized || w.Header().Get("WWW-Authenticate") != "" {
+		t.Fatalf("unexpected basic auth challenge: status=%d headers=%v", w.Code, w.Header())
 	}
 
-	authorized := httptest.NewRequest(http.MethodGet, "/api/state", nil)
-	authorized.SetBasicAuth("admin", "secret")
-	authorizedW := httptest.NewRecorder()
-	handler.ServeHTTP(authorizedW, authorized)
-	if authorizedW.Code != http.StatusOK {
-		t.Fatalf("authorized state request failed: status=%d body=%s", authorizedW.Code, authorizedW.Body.String())
+	// 环境变量已初始化面板账号：不再要求 setup
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/auth/state", nil))
+	var state struct {
+		Required      bool `json:"required"`
+		SetupRequired bool `json:"setupRequired"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &state); err != nil {
+		t.Fatal(err)
+	}
+	if !state.Required || state.SetupRequired {
+		t.Fatalf("env credentials did not bootstrap panel account: %+v", state)
 	}
 
-	health := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-	healthW := httptest.NewRecorder()
-	handler.ServeHTTP(healthW, health)
-	if healthW.Code != http.StatusOK {
-		t.Fatalf("healthz should remain available for container checks: status=%d", healthW.Code)
+	// 用环境变量里的账号密码走页面登录
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"admin","password":"env-password"}`))
+	req.Header.Set("X-App-Token", svc.AppToken())
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("panel login with env credentials failed: status=%d body=%s", w.Code, w.Body.String())
+	}
+	var session *http.Cookie
+	for _, cookie := range w.Result().Cookies() {
+		if cookie.Name == panelCookieName {
+			session = cookie
+		}
+	}
+	if session == nil {
+		t.Fatal("login did not set a session cookie")
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/state", nil)
+	req.AddCookie(session)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("session from env login rejected: status=%d", w.Code)
 	}
 }
 
-func TestPartialBasicAuthConfigurationFailsClosed(t *testing.T) {
+func TestPartialEnvCredentialsIgnored(t *testing.T) {
 	t.Setenv("WBH_AUTH_USER", "admin")
 	t.Setenv("WBH_AUTH_PASSWORD", "")
-	_, handler := testServer(t)
-
-	r := httptest.NewRequest(http.MethodGet, "/api/state", nil)
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, r)
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("partial auth config should fail closed: status=%d body=%s", w.Code, w.Body.String())
+	svc, err := service.New(store.New(t.TempDir()), client.New())
+	if err != nil {
+		t.Fatal(err)
 	}
-	health := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-	healthW := httptest.NewRecorder()
-	handler.ServeHTTP(healthW, health)
-	if healthW.Code != http.StatusServiceUnavailable {
-		t.Fatalf("misconfigured auth should make healthz unhealthy: status=%d", healthW.Code)
+	web := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html><head></head></html>")}}
+	handler := New(svc, web, "", nil).Handler()
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/auth/state", nil))
+	var state struct {
+		SetupRequired bool `json:"setupRequired"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &state); err != nil {
+		t.Fatal(err)
+	}
+	if !state.SetupRequired {
+		t.Fatalf("partial env credentials should be ignored: %+v", state)
+	}
+
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("healthz should stay anonymous: status=%d", w.Code)
 	}
 }
 

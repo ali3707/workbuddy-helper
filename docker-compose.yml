@@ -11,7 +11,8 @@ services:
       - WBH_HOST=0.0.0.0
       # 通过反向代理域名访问时显式列出 Host，例如：
       # - WBH_ALLOWED_HOSTS=panel.example.com:8443
-      # 远程面板建议同时启用 Basic Auth（不要把真实密码提交到仓库）：
+      # 远程面板建议用环境变量指定面板账号（不要把真实密码提交到仓库）：
+      # 设置后每次启动会同步为面板登录账号；不设置则首次访问在页面上初始化。
       # - WBH_AUTH_USER=admin
       # - WBH_AUTH_PASSWORD=change-me
       - WBH_DATA=/data
