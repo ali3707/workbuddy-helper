@@ -186,6 +186,9 @@ func randomID(bytesN int) (string, error) {
 
 func (s *Service) AppToken() string { return s.appToken }
 
+// DataDir 返回数据目录（面板凭据等旁路配置文件所在目录）。
+func (s *Service) DataDir() string { return s.store.Dir() }
+
 func (s *Service) Snapshot() (model.State, []model.PublicAccount) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

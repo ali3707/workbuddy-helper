@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"workbuddy-helper/internal/client"
 	"workbuddy-helper/internal/model"
@@ -26,7 +27,31 @@ func testServer(t *testing.T) (*service.Service, http.Handler) {
 		"app.js":     &fstest.MapFile{Data: []byte("console.log('ok')")},
 	}
 	var root fs.FS = web
-	return svc, New(svc, root, "", nil).Handler()
+	return svc, authenticatedHandler(t, svc, root, "")
+}
+
+// authenticatedHandler 为测试创建已完成面板初始化的处理器，
+// 并自动为每个请求带上会话 Cookie（面板认证默认开启）。
+func authenticatedHandler(t *testing.T, svc *service.Service, web fs.FS, host string) http.Handler {
+	t.Helper()
+	srv := New(svc, web, host, nil)
+	handler := srv.Handler()
+	if srv.panel == nil {
+		return handler
+	}
+	if err := srv.panel.Setup("tester", "tester-password"); err != nil {
+		t.Fatal(err)
+	}
+	token, err := srv.panel.Login("tester", "tester-password", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := r.Cookie(panelCookieName); err != nil {
+			r.AddCookie(&http.Cookie{Name: panelCookieName, Value: token})
+		}
+		handler.ServeHTTP(w, r)
+	})
 }
 
 func TestStateDoesNotExposeTokens(t *testing.T) {
@@ -62,9 +87,9 @@ func TestStateExposesTokenExpiryWithoutCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := New(svc, fstest.MapFS{
+	handler := authenticatedHandler(t, svc, fstest.MapFS{
 		"index.html": &fstest.MapFile{Data: []byte("<html><head></head></html>")},
-	}, "", nil).Handler()
+	}, "")
 
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/state", nil))
@@ -616,7 +641,7 @@ func TestLegacyGlobalAccountIsGroupedIntoInternationalList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := New(svc, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html><head></head></html>")}}, "", nil).Handler()
+	handler := authenticatedHandler(t, svc, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html><head></head></html>")}}, "")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/state", nil))
 	if w.Code != http.StatusOK {
@@ -631,5 +656,168 @@ func TestLegacyGlobalAccountIsGroupedIntoInternationalList(t *testing.T) {
 	}
 	if len(response.CN) != 0 || len(response.Intl) != 1 || response.Intl[0].Version != model.ModeIntl {
 		t.Fatalf("legacy global account was grouped incorrectly: cn=%+v intl=%+v", response.CN, response.Intl)
+	}
+}
+
+func TestAccountBackupEndpoints(t *testing.T) {
+	now := time.Now()
+	st := store.New(t.TempDir())
+	state := model.NewState()
+	state.Accounts = []model.Account{{
+		ID: "a1", UID: "u1", Alias: "主力号", Version: model.ModeCN,
+		AccessToken: "access-secret", RefreshToken: "refresh-secret",
+		ExpiresAt: now.Add(time.Hour).Unix(), Enabled: true, Status: "ready",
+		CreatedAt: now, UpdatedAt: now,
+	}}
+	if err := st.Save(state); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := service.New(st, client.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html><head></head></html>")}}
+	handler := authenticatedHandler(t, svc, web, "")
+
+	exportReq := httptest.NewRequest(http.MethodPost, "/api/accounts/export", strings.NewReader(`{"password":"secret123"}`))
+	exportReq.Header.Set("X-App-Token", svc.AppToken())
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, exportReq)
+	if w.Code != http.StatusOK {
+		t.Fatalf("export status=%d body=%s", w.Code, w.Body.String())
+	}
+	var exported struct {
+		Content string `json:"content"`
+		Count   int    `json:"count"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &exported); err != nil {
+		t.Fatal(err)
+	}
+	if exported.Count != 1 || exported.Content == "" || strings.Contains(exported.Content, "access-secret") {
+		t.Fatalf("unexpected export payload: count=%d len=%d", exported.Count, len(exported.Content))
+	}
+
+	// 缺少本地会话令牌时拒绝导入（CSRF 保护）
+	noToken := httptest.NewRequest(http.MethodPost, "/api/accounts/import", strings.NewReader(`{"password":"secret123","content":"x"}`))
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, noToken)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("import without app token status=%d", w.Code)
+	}
+
+	freshState := model.NewState()
+	freshStore := store.New(t.TempDir())
+	if err := freshStore.Save(freshState); err != nil {
+		t.Fatal(err)
+	}
+	freshSvc, err := service.New(freshStore, client.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	freshHandler := authenticatedHandler(t, freshSvc, web, "")
+	body, err := json.Marshal(map[string]string{"password": "secret123", "content": exported.Content})
+	if err != nil {
+		t.Fatal(err)
+	}
+	importReq := httptest.NewRequest(http.MethodPost, "/api/accounts/import", strings.NewReader(string(body)))
+	importReq.Header.Set("X-App-Token", freshSvc.AppToken())
+	w = httptest.NewRecorder()
+	freshHandler.ServeHTTP(w, importReq)
+	if w.Code != http.StatusOK {
+		t.Fatalf("import status=%d body=%s", w.Code, w.Body.String())
+	}
+	var result struct {
+		Imported int `json:"imported"`
+		Skipped  int `json:"skipped"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Imported != 1 || result.Skipped != 0 {
+		t.Fatalf("unexpected import result: %+v", result)
+	}
+
+	// 错误密码返回 400 且提示可读
+	badBody, _ := json.Marshal(map[string]string{"password": "wrong-password", "content": exported.Content})
+	badReq := httptest.NewRequest(http.MethodPost, "/api/accounts/import", strings.NewReader(string(badBody)))
+	badReq.Header.Set("X-App-Token", freshSvc.AppToken())
+	w = httptest.NewRecorder()
+	freshHandler.ServeHTTP(w, badReq)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "密码错误") {
+		t.Fatalf("wrong password status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestPanelAuthRequiresSetupAndLogin(t *testing.T) {
+	svc, err := service.New(store.New(t.TempDir()), client.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html><head></head></html>")}}
+	handler := New(svc, web, "", nil).Handler()
+
+	// 未登录时 API 一律 401
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/state", nil))
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated state status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	// 首次访问提示初始化
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/auth/state", nil))
+	var state struct {
+		Required      bool `json:"required"`
+		SetupRequired bool `json:"setupRequired"`
+		Authenticated bool `json:"authenticated"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &state); err != nil {
+		t.Fatal(err)
+	}
+	if !state.Required || !state.SetupRequired || state.Authenticated {
+		t.Fatalf("unexpected initial auth state: %+v", state)
+	}
+
+	// 初始化管理员账号并拿到会话 Cookie
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/setup", strings.NewReader(`{"username":"admin","password":"strong-password"}`))
+	req.Header.Set("X-App-Token", svc.AppToken())
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("setup status=%d body=%s", w.Code, w.Body.String())
+	}
+	var session *http.Cookie
+	for _, cookie := range w.Result().Cookies() {
+		if cookie.Name == panelCookieName {
+			session = cookie
+		}
+	}
+	if session == nil || session.Value == "" || !session.HttpOnly {
+		t.Fatalf("session cookie missing or insecure: %+v", session)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/state", nil)
+	req.AddCookie(session)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("authenticated state status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	// 登出后同一 Cookie 立即失效
+	req = httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	req.Header.Set("X-App-Token", svc.AppToken())
+	req.AddCookie(session)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("logout status=%d body=%s", w.Code, w.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/state", nil)
+	req.AddCookie(session)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("session survived logout: status=%d", w.Code)
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"workbuddy-helper/internal/auth"
 	"workbuddy-helper/internal/client"
 	"workbuddy-helper/internal/model"
 	"workbuddy-helper/internal/service"
@@ -32,14 +33,17 @@ type Server struct {
 	authPassword      string
 	authConfigured    bool
 	authMisconfigured bool
-	shutdown          func()
+	// panel 面板级账号密码认证（未设置 WBH_AUTH_USER/PASSWORD 时启用）
+	panel   *auth.Manager
+	panelErr error
+	shutdown func()
 }
 
 func New(svc *service.Service, web fs.FS, host string, shutdown func()) *Server {
 	authUser := strings.TrimSpace(os.Getenv("WBH_AUTH_USER"))
 	authPassword := os.Getenv("WBH_AUTH_PASSWORD")
 	authConfigured := authUser != "" || authPassword != ""
-	return &Server{
+	srv := &Server{
 		service:           svc,
 		web:               web,
 		host:              host,
@@ -51,6 +55,16 @@ func New(svc *service.Service, web fs.FS, host string, shutdown func()) *Server 
 		authMisconfigured: authConfigured && (authUser == "" || authPassword == ""),
 		shutdown:          shutdown,
 	}
+	// 环境变量 Basic Auth 已配置时不再叠加面板登录；否则默认要求面板账号密码。
+	if !authConfigured && svc != nil {
+		manager, err := auth.New(svc.DataDir())
+		if err != nil {
+			srv.panelErr = err
+		} else {
+			srv.panel = manager
+		}
+	}
+	return srv
 }
 
 // buildVersion 由 main 通过 SetVersion 注入（ldflags 构建注入）
@@ -76,11 +90,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/login/poll", s.handleLoginPoll)
 	mux.HandleFunc("POST /api/run-all", s.handleRunAll)
 	mux.HandleFunc("POST /api/refresh-points", s.handleRefreshPoints)
+	mux.HandleFunc("POST /api/accounts/export", s.handleAccountsExport)
+	mux.HandleFunc("POST /api/accounts/import", s.handleAccountsImport)
+	mux.HandleFunc("GET /api/auth/state", s.handleAuthState)
+	mux.HandleFunc("POST /api/auth/setup", s.handleAuthSetup)
+	mux.HandleFunc("POST /api/auth/login", s.handleAuthLogin)
+	mux.HandleFunc("POST /api/auth/logout", s.handleAuthLogout)
 	mux.HandleFunc("PUT /api/settings", s.handleSettings)
 	mux.HandleFunc("POST /api/shutdown", s.handleShutdown)
 	mux.HandleFunc("/api/accounts/", s.handleAccount)
 	mux.HandleFunc("/", s.handleWeb)
-	return s.securityHeaders(s.basicAuth(s.hostGuard(s.csrf(mux))))
+	return s.securityHeaders(s.basicAuth(s.hostGuard(s.csrf(s.panelAuth(mux)))))
 }
 
 // basicAuth is opt-in so local desktop use remains frictionless. When both
@@ -212,6 +232,160 @@ func (s *Server) csrf(next http.Handler) http.Handler {
 	})
 }
 
+const panelCookieName = "wbh_panel"
+
+// panelAuth 要求面板账号密码登录后才能访问 API；静态资源与 /api/auth/* 保持公开。
+func (s *Server) panelAuth(next http.Handler) http.Handler {
+	if s.panel == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.panelErr != nil {
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				writeError(w, http.StatusServiceUnavailable, "面板认证配置损坏，请检查 data/auth.json")
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+		path := r.URL.Path
+		if path == "/healthz" || strings.HasPrefix(path, "/api/auth/") || !strings.HasPrefix(path, "/api/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		cookie, err := r.Cookie(panelCookieName)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "请先登录面板")
+			return
+		}
+		if _, ok := s.panel.Authenticate(cookie.Value); !ok {
+			writeError(w, http.StatusUnauthorized, "登录已过期，请重新登录")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) handleAuthState(w http.ResponseWriter, r *http.Request) {
+	if s.panel == nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"required": false, "authenticated": true, "setupRequired": false, "username": "",
+		})
+		return
+	}
+	if s.panelErr != nil {
+		writeError(w, http.StatusServiceUnavailable, "面板认证配置损坏，请检查 data/auth.json")
+		return
+	}
+	username := ""
+	if cookie, err := r.Cookie(panelCookieName); err == nil {
+		if name, ok := s.panel.Authenticate(cookie.Value); ok {
+			username = name
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"required":      true,
+		"setupRequired": !s.panel.Configured(),
+		"authenticated": username != "",
+		"username":      username,
+	})
+}
+
+func (s *Server) handleAuthSetup(w http.ResponseWriter, r *http.Request) {
+	if s.panel == nil {
+		writeError(w, http.StatusBadRequest, "已启用环境变量认证，无需初始化面板账号")
+		return
+	}
+	var body struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "请求格式不正确")
+		return
+	}
+	if err := s.panel.Setup(body.Username, body.Password); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, auth.ErrAlreadySetup) {
+			status = http.StatusConflict
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	s.finishPanelLogin(w, r, body.Username, body.Password)
+}
+
+func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
+	if s.panel == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "username": ""})
+		return
+	}
+	var body struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "请求格式不正确")
+		return
+	}
+	token, err := s.panel.Login(body.Username, body.Password, clientIP(r))
+	if err != nil {
+		switch {
+		case errors.Is(err, auth.ErrTooManyFails):
+			writeError(w, http.StatusTooManyRequests, err.Error())
+		case errors.Is(err, auth.ErrNotSetup):
+			writeError(w, http.StatusBadRequest, "请先初始化面板账号")
+		default:
+			writeError(w, http.StatusUnauthorized, "用户名或密码不正确")
+		}
+		return
+	}
+	s.setSessionCookie(w, r, token)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "username": s.panel.Username()})
+}
+
+func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
+	if s.panel != nil {
+		if cookie, err := r.Cookie(panelCookieName); err == nil {
+			s.panel.Logout(cookie.Value)
+		}
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: panelCookieName, Value: "", Path: "/", HttpOnly: true,
+		SameSite: http.SameSiteLaxMode, MaxAge: -1, Expires: time.Unix(0, 0),
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) finishPanelLogin(w http.ResponseWriter, r *http.Request, username, password string) {
+	token, err := s.panel.Login(username, password, clientIP(r))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "面板账号已创建，请重新登录")
+		return
+	}
+	s.setSessionCookie(w, r, token)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "username": s.panel.Username()})
+}
+
+func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, token string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     panelCookieName,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   r.TLS != nil,
+		MaxAge:   int(auth.SessionTTL / time.Second),
+	})
+}
+
+func clientIP(r *http.Request) string {
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
 func (s *Server) allowedOrigin(raw, requestHost string) bool {
 	u, err := url.Parse(raw)
 	if err != nil || u.User != nil || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
@@ -263,7 +437,7 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-src 'self' https://*.codebuddy.cn https://*.workbuddy.ai https://*.codebuddy.ai https://*.tencent.com https://*.qq.com; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -468,6 +642,61 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"settings": publicSettings(settings)})
+}
+
+func (s *Server) handleAccountsExport(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "导出请求格式不正确")
+		return
+	}
+	content, filename, count, err := s.service.ExportAccounts(body.Password)
+	if err != nil {
+		if service.IsUserError(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+		} else {
+			log.Printf("export accounts failed: %v", err)
+			writeError(w, http.StatusInternalServerError, "导出失败，请检查 data 目录后重试")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"filename": filename,
+		"content":  content,
+		"count":    count,
+	})
+}
+
+func (s *Server) handleAccountsImport(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Password string `json:"password"`
+		Content  string `json:"content"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "导入请求格式不正确")
+		return
+	}
+	imported, skipped, err := s.service.ImportAccounts(body.Password, body.Content)
+	if err != nil {
+		if service.IsUserError(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+		} else {
+			log.Printf("import accounts failed: %v", err)
+			writeError(w, http.StatusInternalServerError, "导入失败，未能保存账号")
+		}
+		return
+	}
+	message := fmt.Sprintf("新增 %d 个账号", imported)
+	if skipped > 0 {
+		message += fmt.Sprintf("，跳过 %d 个已存在或无效账号", skipped)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"imported": imported,
+		"skipped":  skipped,
+		"message":  message,
+	})
 }
 
 func publicSettings(settings model.Settings) model.Settings {

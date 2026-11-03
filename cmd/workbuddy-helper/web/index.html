@@ -34,6 +34,13 @@
             <span class="status-dot" aria-hidden="true"></span>
             <span id="connection-label">正在连接</span>
           </div>
+          <div class="user-chip" id="user-chip" hidden>
+            <i data-lucide="user-round" aria-hidden="true"></i>
+            <span id="user-name">admin</span>
+            <button class="icon-button" id="logout-button" type="button" aria-label="退出面板登录" data-tooltip="退出登录">
+              <i data-lucide="log-out" aria-hidden="true"></i>
+            </button>
+          </div>
           <button class="icon-button" id="open-logs" type="button" aria-label="查看运行日志" data-tooltip="运行日志">
             <i data-lucide="scroll-text" aria-hidden="true"></i>
           </button>
@@ -41,17 +48,21 @@
             <i data-lucide="refresh-cw" aria-hidden="true"></i>
           </button>
           <button class="button button-primary" id="add-account" type="button">
-            <i data-lucide="user-plus" aria-hidden="true"></i>
-            <span>添加账户</span>
+            <i data-lucide="log-in" aria-hidden="true"></i>
+            <span>登录账号</span>
           </button>
         </div>
       </header>
 
       <main class="main-content" id="accounts">
         <section class="page-heading" aria-labelledby="page-title">
-          <div>
-            <h1 id="page-title">国内版账户</h1>
-            <p id="last-updated">等待首次同步</p>
+          <div class="heading-copy">
+            <div class="heading-title-row">
+              <h1 id="page-title">国内版</h1>
+              <span class="version-badge" id="page-badge">每日签到</span>
+            </div>
+            <p id="page-subtitle">每天签到领取积分</p>
+            <p class="page-meta" id="last-updated">等待首次同步</p>
           </div>
           <div class="heading-actions">
             <button class="button button-secondary" id="refresh-points-all" type="button">
@@ -153,18 +164,6 @@
             </div>
 
             <form id="schedule-form">
-              <div class="form-row">
-                <label for="version-mode">默认查看版本</label>
-                <div class="select-field">
-                  <select id="version-mode" name="mode" aria-label="选择默认查看版本">
-                    <option value="cn">国内版 · 签到领积分</option>
-                    <option value="intl">国际版 · 活跃得积分</option>
-                  </select>
-                  <i data-lucide="chevron-down" aria-hidden="true"></i>
-                </div>
-                <p class="field-hint">定时任务会同时执行两套列表（国内版签到 + 国际版活跃）；该选项只决定打开页面时默认展示的列表</p>
-              </div>
-
               <div class="form-row" id="active-model-row" hidden>
                 <label for="active-model">活跃模型</label>
                 <div class="select-field">
@@ -228,6 +227,21 @@
                 </div>
               </div>
 
+              <div class="form-row">
+                <span class="field-label">账户备份</span>
+                <div class="backup-actions">
+                  <button class="button button-secondary" id="export-accounts" type="button">
+                    <i data-lucide="download" aria-hidden="true"></i>
+                    <span>导出账号</span>
+                  </button>
+                  <button class="button button-secondary" id="import-accounts" type="button">
+                    <i data-lucide="upload" aria-hidden="true"></i>
+                    <span>导入账号</span>
+                  </button>
+                </div>
+                <p class="field-hint">导出文件用密码加密（含令牌），可迁移到其他设备；导入按 UID 去重，不覆盖已有账号</p>
+              </div>
+
               <button class="button button-secondary button-full" id="save-schedule" type="submit">
                 <i data-lucide="save" aria-hidden="true"></i>
                 <span>保存设置</span>
@@ -236,6 +250,92 @@
           </aside>
         </div>
       </main>
+
+      <div class="login-page" id="auth-page" hidden role="region" aria-labelledby="auth-title">
+        <section class="login-card">
+          <div class="login-card-header">
+            <div class="modal-icon"><i data-lucide="shield-check" aria-hidden="true"></i></div>
+            <div>
+              <h1 id="auth-title">登录面板</h1>
+              <p id="auth-subtitle">输入面板账号密码后继续</p>
+            </div>
+          </div>
+          <form id="auth-form" autocomplete="on">
+            <label class="field-label" for="auth-username">用户名</label>
+            <input class="text-input" id="auth-username" type="text" maxlength="64" autocomplete="username" placeholder="面板用户名" required />
+            <label class="field-label" for="auth-password">密码</label>
+            <input class="text-input" id="auth-password" type="password" autocomplete="current-password" placeholder="面板密码" required />
+            <label class="field-label" id="auth-confirm-label" for="auth-confirm" hidden>确认密码</label>
+            <input class="text-input" id="auth-confirm" type="password" autocomplete="new-password" placeholder="再次输入密码" hidden />
+            <p class="field-hint" id="auth-hint">首次使用请设置管理员账号，密码至少 8 位。</p>
+            <button class="button button-primary button-full" id="auth-submit" type="submit">
+              <i data-lucide="log-in" aria-hidden="true"></i>
+              <span id="auth-submit-label">登录</span>
+            </button>
+          </form>
+        </section>
+      </div>
+
+      <div class="login-page" id="login-page" hidden role="region" aria-labelledby="login-title">
+        <section class="login-card">
+          <div class="login-card-header">
+            <div class="modal-icon"><i data-lucide="log-in" aria-hidden="true"></i></div>
+            <div>
+              <h1 id="login-title">登录 WorkBuddy 账号</h1>
+              <p id="login-subtitle">选择版本后在浏览器完成授权，登录成功后账号会出现在对应列表。</p>
+            </div>
+          </div>
+
+          <div class="login-version" role="group" aria-label="选择登录版本">
+            <button class="login-version-option is-active" type="button" data-login-version="cn" aria-pressed="true">
+              <strong>国内版</strong>
+              <span>每日签到</span>
+            </button>
+            <button class="login-version-option" type="button" data-login-version="intl" aria-pressed="false">
+              <strong>国际版</strong>
+              <span>每日活跃</span>
+            </button>
+          </div>
+          <p class="login-version-hint" id="login-version-hint">国内版登录页：codebuddy.cn，登录后每天签到领积分</p>
+
+          <div class="login-stage" id="login-starting">
+            <div class="loading-spinner loading-spinner-large" aria-hidden="true"></div>
+            <strong>正在创建登录会话</strong>
+            <span>请稍候</span>
+          </div>
+
+          <div class="login-stage" id="login-ready" hidden>
+            <div class="login-frame-wrap">
+              <iframe id="login-frame" class="login-frame" title="WorkBuddy 登录页" referrerpolicy="no-referrer" allow="clipboard-write"></iframe>
+            </div>
+            <p class="login-frame-hint" id="login-url-label">登录页加载中…</p>
+            <a class="button button-primary button-full" id="open-login-link" href="#" target="_blank" rel="noopener noreferrer">
+              <i data-lucide="square-arrow-out-up-right" aria-hidden="true"></i>
+              <span>在新窗口打开登录页</span>
+            </a>
+            <button class="button button-quiet button-full" id="copy-login-link" type="button">
+              <i data-lucide="copy" aria-hidden="true"></i>
+              <span>复制链接</span>
+            </button>
+            <div class="poll-status" id="login-poll-status" role="status" aria-live="polite">
+              <span class="pulse-dot" aria-hidden="true"></span>
+              <span>等待登录完成</span>
+            </div>
+          </div>
+
+          <div class="login-stage login-error" id="login-error" hidden>
+            <i data-lucide="circle-alert" aria-hidden="true"></i>
+            <strong>登录会话创建失败</strong>
+            <span id="login-error-message">请稍后重试</span>
+            <button class="button button-secondary" id="retry-login" type="button">
+              <i data-lucide="rotate-cw" aria-hidden="true"></i>
+              <span>重试</span>
+            </button>
+          </div>
+
+          <button class="button button-quiet button-full login-back" id="cancel-login" type="button">返回账户列表</button>
+        </section>
+      </div>
     </div>
 
     <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
@@ -262,54 +362,39 @@
       </div>
     </aside>
 
-    <dialog class="modal" id="login-dialog" aria-labelledby="login-title">
-      <form method="dialog" class="modal-card" id="login-form">
+
+    <dialog class="modal modal-small" id="backup-dialog" aria-labelledby="backup-title">
+      <form method="dialog" class="modal-card">
         <div class="modal-header">
-          <div class="modal-icon"><i data-lucide="log-in" aria-hidden="true"></i></div>
+          <div class="modal-icon"><i data-lucide="archive-restore" aria-hidden="true"></i></div>
           <div>
-            <h2 id="login-title">添加 WorkBuddy 账户</h2>
-            <p>在腾讯登录页完成授权后，账户会自动加入列表。</p>
+            <h2 id="backup-title">导出账号</h2>
+            <p id="backup-subtitle">导出为密码加密的 JSON 文件</p>
           </div>
-          <button class="icon-button modal-close" value="cancel" type="submit" aria-label="关闭登录窗口" data-tooltip="关闭">
+          <button class="icon-button modal-close" value="cancel" type="submit" aria-label="关闭备份窗口" data-tooltip="关闭">
             <i data-lucide="x" aria-hidden="true"></i>
           </button>
         </div>
 
-        <div class="login-stage" id="login-starting">
-          <div class="loading-spinner loading-spinner-large" aria-hidden="true"></div>
-          <strong>正在创建登录会话</strong>
-          <span>请稍候</span>
-        </div>
-
-        <div class="login-stage" id="login-ready" hidden>
-          <div class="login-link-panel">
-            <i data-lucide="external-link" aria-hidden="true"></i>
-            <div>
-              <strong>登录链接已准备好</strong>
-              <span id="login-url-label">请在浏览器中打开</span>
-            </div>
-          </div>
-          <a class="button button-primary button-full" id="open-login-link" href="#" target="_blank" rel="noopener noreferrer">
-            <i data-lucide="square-arrow-out-up-right" aria-hidden="true"></i>
-            <span>打开腾讯登录页</span>
-          </a>
-          <button class="button button-quiet button-full" id="copy-login-link" type="button">
-            <i data-lucide="copy" aria-hidden="true"></i>
-            <span>复制登录链接</span>
+        <div id="backup-export-stage">
+          <label class="field-label" for="backup-password">设置密码（至少 6 位）</label>
+          <input class="text-input" id="backup-password" type="password" minlength="6" autocomplete="new-password" placeholder="用于加密备份文件" />
+          <p class="field-hint">令牌会加密写入文件；密码不会保存，忘记后无法恢复备份内容。</p>
+          <button class="button button-primary button-full" id="confirm-export" type="button">
+            <i data-lucide="download" aria-hidden="true"></i>
+            <span>导出并下载</span>
           </button>
-          <div class="poll-status" id="login-poll-status" role="status" aria-live="polite">
-            <span class="pulse-dot" aria-hidden="true"></span>
-            <span>等待登录完成</span>
-          </div>
         </div>
 
-        <div class="login-stage login-error" id="login-error" hidden>
-          <i data-lucide="circle-alert" aria-hidden="true"></i>
-          <strong>登录会话创建失败</strong>
-          <span id="login-error-message">请稍后重试</span>
-          <button class="button button-secondary" id="retry-login" type="button">
-            <i data-lucide="rotate-cw" aria-hidden="true"></i>
-            <span>重试</span>
+        <div id="backup-import-stage" hidden>
+          <label class="field-label" for="backup-file">选择备份文件</label>
+          <input class="text-input" id="backup-file" type="file" accept=".json,application/json" />
+          <label class="field-label" for="backup-import-password">备份密码</label>
+          <input class="text-input" id="backup-import-password" type="password" autocomplete="current-password" placeholder="导出时设置的密码" />
+          <p class="field-hint">按「版本 + UID」去重，已存在的账号会跳过，不会覆盖本地令牌。</p>
+          <button class="button button-primary button-full" id="confirm-import" type="button">
+            <i data-lucide="upload" aria-hidden="true"></i>
+            <span>导入账号</span>
           </button>
         </div>
       </form>

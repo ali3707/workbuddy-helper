@@ -29,12 +29,12 @@
     scheduleTime: document.querySelector("#schedule-time"),
     scheduleSummary: document.querySelector("#schedule-summary"),
     saveSchedule: document.querySelector("#save-schedule"),
-    versionMode: document.querySelector("#version-mode"),
-    modeHint: document.querySelector("#mode-hint"),
     versionSwitch: document.querySelector("#version-switch"),
     proxyScheme: document.querySelector("#proxy-scheme"),
     proxyHost: document.querySelector("#proxy-host"),
     pageTitle: document.querySelector("#page-title"),
+    pageBadge: document.querySelector("#page-badge"),
+    pageSubtitle: document.querySelector("#page-subtitle"),
     activeModel: document.querySelector("#active-model"),
     activeModelRow: document.querySelector("#active-model-row"),
     activePrompt: document.querySelector("#active-prompt"),
@@ -50,17 +50,47 @@
     refreshLogs: document.querySelector("#refresh-logs"),
     logList: document.querySelector("#log-list"),
     logSubtitle: document.querySelector("#log-subtitle"),
-    loginDialog: document.querySelector("#login-dialog"),
-    loginForm: document.querySelector("#login-form"),
+    authPage: document.querySelector("#auth-page"),
+    authForm: document.querySelector("#auth-form"),
+    authTitle: document.querySelector("#auth-title"),
+    authSubtitle: document.querySelector("#auth-subtitle"),
+    authUsername: document.querySelector("#auth-username"),
+    authPassword: document.querySelector("#auth-password"),
+    authConfirm: document.querySelector("#auth-confirm"),
+    authConfirmLabel: document.querySelector("#auth-confirm-label"),
+    authHint: document.querySelector("#auth-hint"),
+    authSubmit: document.querySelector("#auth-submit"),
+    userChip: document.querySelector("#user-chip"),
+    userName: document.querySelector("#user-name"),
+    logoutButton: document.querySelector("#logout-button"),
+    loginPage: document.querySelector("#login-page"),
+    cancelLogin: document.querySelector("#cancel-login"),
+    dashboard: document.querySelector("#accounts"),
     loginStarting: document.querySelector("#login-starting"),
     loginReady: document.querySelector("#login-ready"),
     loginError: document.querySelector("#login-error"),
     loginErrorMessage: document.querySelector("#login-error-message"),
+    loginSubtitle: document.querySelector("#login-subtitle"),
+    loginVersionHint: document.querySelector("#login-version-hint"),
+    loginVersionButtons: document.querySelectorAll("[data-login-version]"),
     loginUrlLabel: document.querySelector("#login-url-label"),
+    loginFrame: document.querySelector("#login-frame"),
     openLoginLink: document.querySelector("#open-login-link"),
     copyLoginLink: document.querySelector("#copy-login-link"),
     loginPollStatus: document.querySelector("#login-poll-status"),
     retryLogin: document.querySelector("#retry-login"),
+    backupDialog: document.querySelector("#backup-dialog"),
+    backupTitle: document.querySelector("#backup-title"),
+    backupSubtitle: document.querySelector("#backup-subtitle"),
+    backupExportStage: document.querySelector("#backup-export-stage"),
+    backupImportStage: document.querySelector("#backup-import-stage"),
+    backupPassword: document.querySelector("#backup-password"),
+    backupImportPassword: document.querySelector("#backup-import-password"),
+    backupFile: document.querySelector("#backup-file"),
+    confirmExport: document.querySelector("#confirm-export"),
+    confirmImport: document.querySelector("#confirm-import"),
+    exportAccounts: document.querySelector("#export-accounts"),
+    importAccounts: document.querySelector("#import-accounts"),
     editDialog: document.querySelector("#edit-dialog"),
     editForm: document.querySelector("#edit-form"),
     editAccountId: document.querySelector("#edit-account-id"),
@@ -77,6 +107,10 @@
     viewVersion: "cn",
     // 首次加载设置后按「默认版本」对齐默认查看列表，之后尊重用户手动切换
     viewInitialized: false,
+    // 登录弹窗中选择的版本，决定登录链接与账号归属列表
+    loginVersion: "cn",
+    // 面板级登录状态：required=false 表示已用环境变量 Basic Auth 保护
+    auth: { required: false, setupRequired: false, authenticated: true, username: "" },
     settings: {
       scheduleEnabled: false,
       scheduleTime: "09:15",
@@ -179,6 +213,10 @@
       }
     }
 
+    if (response.status === 401 && !path.startsWith("/api/auth/")) {
+      app.auth.authenticated = false;
+      showAuthPage(false);
+    }
     if (!response.ok) {
       const message =
         payload?.message ||
@@ -566,7 +604,7 @@
 
     elements.summaryTotal.textContent = integerFormatter.format(app.accounts.length);
     elements.summaryChecked.textContent = integerFormatter.format(checked);
-    elements.summaryCheckedLabel.textContent = intl ? "今日已发送" : "今日已签到";
+    elements.summaryCheckedLabel.textContent = intl ? "今日已活跃" : "今日已签到";
     elements.summaryEnabled.textContent = integerFormatter.format(enabled);
     elements.summaryPoints.textContent = pointsValues.length ? numberFormatter.format(pointsTotal) : "--";
   }
@@ -625,7 +663,13 @@
 
     if (!app.accounts.length) {
       elements.accountRows.innerHTML = "";
-      renderTableState("empty", "还没有账户", "添加账户后即可签到并查询积分", "添加账户");
+      const intl = app.viewVersion === "intl";
+      renderTableState(
+        "empty",
+        intl ? "还没有登录国际版账号" : "还没有登录国内版账号",
+        intl ? "登录后即可每天发送活跃会话" : "登录后即可每天签到领取积分",
+        "登录账号",
+      );
       return;
     }
 
@@ -705,14 +749,19 @@
   function renderSchedule() {
     const viewIntl = app.viewVersion === "intl";
     if (elements.versionSwitch) elements.versionSwitch.value = app.viewVersion;
-    if (elements.pageTitle) elements.pageTitle.textContent = viewIntl ? "国际版账户" : "国内版账户";
+    if (elements.pageTitle) elements.pageTitle.textContent = viewIntl ? "国际版" : "国内版";
+    if (elements.pageBadge) elements.pageBadge.textContent = viewIntl ? "每日活跃" : "每日签到";
+    if (elements.pageSubtitle) {
+      elements.pageSubtitle.textContent = viewIntl
+        ? "每天发送一次活跃会话，获取积分"
+        : "每天在 codebuddy.cn 签到，领取积分";
+    }
     elements.scheduleEnabled.checked = app.settings.scheduleEnabled;
     elements.scheduleTime.value = app.settings.scheduleTime;
     elements.scheduleTime.disabled = !app.settings.scheduleEnabled;
     elements.scheduleSummary.textContent = app.settings.scheduleEnabled
       ? `每日 ${app.settings.scheduleTime} 同时执行国内签到与国际活跃`
       : "当前已关闭";
-    elements.versionMode.value = app.settings.mode;
     elements.activeModel.value = app.settings.activeModel;
     elements.activePrompt.value = app.settings.activePrompt || "";
     elements.recheckDelay.value = String(app.settings.recheckDelayMinutes);
@@ -736,7 +785,6 @@
     return {
       scheduleEnabled: elements.scheduleEnabled.checked,
       scheduleTime: elements.scheduleTime.value,
-      mode: elements.versionMode.value,
       activeModel: elements.activeModel.value,
       activePrompt: elements.activePrompt.value,
       recheckDelay: elements.recheckDelay.value,
@@ -750,7 +798,6 @@
     elements.scheduleEnabled.checked = draft.scheduleEnabled;
     elements.scheduleTime.value = draft.scheduleTime;
     elements.scheduleTime.disabled = !draft.scheduleEnabled;
-    elements.versionMode.value = draft.mode;
     elements.activeModel.value = draft.activeModel;
     elements.activePrompt.value = draft.activePrompt;
     elements.recheckDelay.value = draft.recheckDelay;
@@ -987,7 +1034,6 @@
     event.preventDefault();
     const scheduleEnabled = elements.scheduleEnabled.checked;
     const scheduleTime = normalizeTime(elements.scheduleTime.value);
-    const mode = elements.versionMode.value === "intl" ? "intl" : "cn";
     const activeModel = ["hy3", "hy4-preview"].includes(elements.activeModel.value) ? elements.activeModel.value : "hy3";
     const recheckDelayMinutes = clampRecheckDelay(parseNumber(elements.recheckDelay.value) ?? 840);
     if (elements.proxyScheme.value && !elements.proxyHost.value.trim()) {
@@ -1002,7 +1048,7 @@
     setButtonBusy(elements.saveSchedule, true, "保存中");
 
     try {
-      const settingsPayload = { scheduleEnabled, scheduleTime, mode, activeModel, recheckDelayMinutes, activePrompt };
+      const settingsPayload = { scheduleEnabled, scheduleTime, activeModel, recheckDelayMinutes, activePrompt };
       // 公开设置会隐藏代理认证信息。只有用户实际编辑过代理字段时才提交，
       // 避免保存其他设置时用脱敏 URL 覆盖 data/proxy.conf 中的真实凭据。
       if (app.proxyDirty) settingsPayload.proxyUrl = proxyUrl;
@@ -1018,7 +1064,7 @@
       app.settings = {
         scheduleEnabled: parseBoolean(firstDefined(saved.scheduleEnabled, scheduleEnabled), false),
         scheduleTime: normalizeTime(firstDefined(saved.scheduleTime, scheduleTime)),
-        mode: String(firstDefined(saved.mode, mode)) === "intl" ? "intl" : "cn",
+        mode: String(firstDefined(saved.mode, app.settings.mode)) === "intl" ? "intl" : "cn",
         activeModel: ["hy3", "hy4-preview"].includes(String(saved.activeModel)) ? String(saved.activeModel) : activeModel,
         recheckDelayMinutes: clampRecheckDelay(parseNumber(saved.recheckDelayMinutes) ?? recheckDelayMinutes),
         proxyUrl: String(firstDefined(saved.proxyUrl, proxyUrl, "") || ""),
@@ -1038,12 +1084,104 @@
     }
   }
 
+  // 版本切换只影响浏览偏好：静默保存，失败不影响使用
+  async function persistViewVersion(version) {
+    try {
+      const result = await api("/api/settings", {
+        method: "PUT",
+        body: JSON.stringify({ mode: version === "intl" ? "intl" : "cn" }),
+      });
+      if (result?.settings) {
+        app.settings.mode = String(result.settings.mode) === "intl" ? "intl" : "cn";
+      }
+    } catch {
+      // 浏览偏好的保存失败不阻塞当前视图
+    }
+  }
+
+  function openBackupDialog(mode) {
+    if (!elements.backupDialog) return;
+    const importing = mode === "import";
+    elements.backupTitle.textContent = importing ? "导入账号" : "导出账号";
+    elements.backupSubtitle.textContent = importing
+      ? "选择备份文件并输入导出时设置的密码"
+      : "导出为密码加密的 JSON 文件（含登录令牌）";
+    elements.backupExportStage.hidden = importing;
+    elements.backupImportStage.hidden = !importing;
+    elements.backupPassword.value = "";
+    elements.backupImportPassword.value = "";
+    elements.backupFile.value = "";
+    elements.backupDialog.showModal();
+  }
+
+  async function exportAccounts() {
+    const password = elements.backupPassword.value;
+    if (password.length < 6) {
+      toast("导出密码至少 6 位", "error");
+      elements.backupPassword.focus();
+      return;
+    }
+    setButtonBusy(elements.confirmExport, true, "导出中");
+    try {
+      const result = await api("/api/accounts/export", {
+        method: "POST",
+        body: JSON.stringify({ password }),
+      });
+      const content = String(result?.content || "");
+      if (!content) throw new Error("服务未返回备份内容");
+      const blob = new Blob([content], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = String(result?.filename || "workbuddy-accounts.json");
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast(`已导出 ${integerFormatter.format(Number(result?.count) || 0)} 个账号`);
+      elements.backupDialog.close();
+    } catch (error) {
+      toast(`导出失败：${getErrorMessage(error)}`, "error");
+    } finally {
+      setButtonBusy(elements.confirmExport, false);
+    }
+  }
+
+  async function importAccounts() {
+    const file = elements.backupFile.files?.[0];
+    const password = elements.backupImportPassword.value;
+    if (!file) {
+      toast("请选择备份文件", "error");
+      return;
+    }
+    if (password.length < 6) {
+      toast("请输入导出时设置的密码", "error");
+      elements.backupImportPassword.focus();
+      return;
+    }
+    setButtonBusy(elements.confirmImport, true, "导入中");
+    try {
+      const content = await file.text();
+      const result = await api("/api/accounts/import", {
+        method: "POST",
+        body: JSON.stringify({ password, content }),
+      });
+      toast(result?.message || "导入完成");
+      elements.backupDialog.close();
+      await loadState({ quiet: true });
+    } catch (error) {
+      toast(`导入失败：${getErrorMessage(error)}`, "error");
+    } finally {
+      setButtonBusy(elements.confirmImport, false);
+    }
+  }
+
   function setLoginStage(stage, message = "") {
     elements.loginStarting.hidden = stage !== "starting";
     elements.loginReady.hidden = stage !== "ready";
     elements.loginError.hidden = stage !== "error";
     if (stage === "error") elements.loginErrorMessage.textContent = message || "请稍后重试";
-    refreshIcons(elements.loginDialog);
+    refreshIcons(elements.loginPage);
   }
 
   function stopLoginPolling() {
@@ -1054,36 +1192,183 @@
     }
   }
 
+  // 登录版本明确二选一：国内版=签到，国际版=活跃，不再跟随当前列表隐式决定
+  function renderLoginVersion() {
+    const intl = app.loginVersion === "intl";
+    elements.loginVersionButtons.forEach((button) => {
+      const active = button.dataset.loginVersion === app.loginVersion;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+    if (elements.loginVersionHint) {
+      elements.loginVersionHint.textContent = intl
+        ? "国际版登录页：workbuddy.ai，登录后每天发送活跃会话"
+        : "国内版登录页：codebuddy.cn，登录后每天签到领积分";
+    }
+    const openLabel = elements.openLoginLink.querySelector("span");
+    if (openLabel) openLabel.textContent = intl ? "在新窗口打开国际版登录页" : "在新窗口打开国内版登录页";
+  }
+
+  // 面板级登录：未通过时只显示登录/初始化页，所有 API 由服务端拦截
+  function setAuthChrome() {
+    const authed = !app.auth.required || app.auth.authenticated;
+    document.body.classList.toggle("auth-locked", !authed);
+    if (elements.userChip) elements.userChip.hidden = !(authed && app.auth.required);
+    if (elements.userName) elements.userName.textContent = app.auth.username || "admin";
+  }
+
+  function showAuthPage(setup) {
+    app.auth.authenticated = false;
+    app.auth.setupRequired = Boolean(setup);
+    elements.dashboard.hidden = true;
+    elements.loginPage.hidden = true;
+    elements.authPage.hidden = false;
+    elements.authTitle.textContent = setup ? "初始化面板" : "登录面板";
+    elements.authSubtitle.textContent = setup
+      ? "首次使用，请设置管理员用户名与密码"
+      : "输入面板账号密码后继续";
+    elements.authHint.textContent = setup
+      ? "密码至少 8 位，只在本机 data/auth.json 保存哈希，不会上传。"
+      : "忘记密码可删除 data/auth.json 后重新初始化。";
+    elements.authConfirm.hidden = !setup;
+    elements.authConfirmLabel.hidden = !setup;
+    // setButtonBusy 会重建按钮内部节点，这里按 id 重新查询，避免引用失效
+    const submitLabel = elements.authSubmit.querySelector("#auth-submit-label");
+    if (submitLabel) submitLabel.textContent = setup ? "创建并登录" : "登录";
+    elements.authPassword.value = "";
+    elements.authConfirm.value = "";
+    setAuthChrome();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function showDashboard() {
+    elements.authPage.hidden = true;
+    elements.loginPage.hidden = true;
+    elements.dashboard.hidden = false;
+    setAuthChrome();
+  }
+
+  async function submitAuth(event) {
+    event.preventDefault();
+    const setup = app.auth.setupRequired;
+    const username = elements.authUsername.value.trim();
+    const password = elements.authPassword.value;
+    if (!username) {
+      toast("请输入用户名", "error");
+      return;
+    }
+    if (setup ? password.length < 8 : !password) {
+      toast(setup ? "密码至少 8 位" : "请输入密码", "error");
+      return;
+    }
+    if (setup && password !== elements.authConfirm.value) {
+      toast("两次输入的密码不一致", "error");
+      return;
+    }
+    setButtonBusy(elements.authSubmit, true, setup ? "创建中" : "登录中");
+    try {
+      const result = await api(setup ? "/api/auth/setup" : "/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ username, password }),
+      });
+      app.auth = {
+        required: true,
+        setupRequired: false,
+        authenticated: true,
+        username: String(result?.username || username),
+      };
+      elements.authPassword.value = "";
+      elements.authConfirm.value = "";
+      showDashboard();
+      await loadState();
+    } catch (error) {
+      toast(`登录失败：${getErrorMessage(error)}`, "error");
+    } finally {
+      setButtonBusy(elements.authSubmit, false);
+    }
+  }
+
+  async function logoutPanel() {
+    try {
+      await api("/api/auth/logout", { method: "POST" });
+    } catch {
+      // 退出失败也回到登录页，本地会话已不可用
+    }
+    app.auth = { required: true, setupRequired: false, authenticated: false, username: "" };
+    showAuthPage(false);
+    elements.authUsername.value = "";
+  }
+
+  async function bootApp() {
+    try {
+      const state = await api("/api/auth/state");
+      app.auth = {
+        required: Boolean(state?.required),
+        setupRequired: Boolean(state?.setupRequired),
+        authenticated: Boolean(state?.authenticated),
+        username: String(state?.username || ""),
+      };
+    } catch (error) {
+      app.auth = { required: true, setupRequired: false, authenticated: false, username: "" };
+      toast(getErrorMessage(error, "无法读取面板认证状态"), "error");
+    }
+    if (!app.auth.required || app.auth.authenticated) {
+      showDashboard();
+      await loadState();
+      return;
+    }
+    showAuthPage(app.auth.setupRequired);
+  }
+
+  // 登录是页面内的独立视图：隐藏账户看板，展示版本选择与授权状态
+  function openLoginPage(version = app.viewVersion) {
+    app.loginVersion = version === "intl" ? "intl" : "cn";
+    renderLoginVersion();
+    elements.dashboard.hidden = true;
+    elements.loginPage.hidden = false;
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    startLogin();
+  }
+
+  function closeLoginPage() {
+    stopLoginPolling();
+    elements.loginPage.hidden = true;
+    elements.dashboard.hidden = false;
+  }
+
   async function startLogin() {
     stopLoginPolling();
     const generation = app.loginPollGeneration;
-    const loginVersion = app.viewVersion;
+    const loginVersion = app.loginVersion;
     app.loginId = "";
     app.loginUrl = "";
     setLoginStage("starting");
-    if (!elements.loginDialog.open) elements.loginDialog.showModal();
+    if (elements.loginPage.hidden) return;
 
     try {
       const result = await api("/api/login/start", {
         method: "POST",
         body: JSON.stringify({ version: loginVersion }),
       });
-      if (generation !== app.loginPollGeneration || !elements.loginDialog.open) return;
+      if (generation !== app.loginPollGeneration || elements.loginPage.hidden) return;
       app.loginId = String(firstDefined(result?.loginId, result?.id, result?.sessionId, ""));
       app.loginUrl = String(firstDefined(result?.authUrl, result?.url, result?.loginUrl, ""));
       if (!app.loginId || !app.loginUrl) throw new Error("服务未返回有效的登录信息");
 
       elements.openLoginLink.href = app.loginUrl;
-      elements.loginUrlLabel.textContent = compactUrl(app.loginUrl);
+      elements.loginUrlLabel.textContent = `登录页：${compactUrl(app.loginUrl)}`;
+      if (elements.loginFrame.getAttribute("src") !== app.loginUrl) {
+        elements.loginFrame.src = app.loginUrl;
+      }
       const loginIntl = loginVersion === "intl";
       const openLabel = elements.openLoginLink.querySelector("span");
-      if (openLabel) openLabel.textContent = loginIntl ? "打开 WorkBuddy 登录页" : "打开腾讯登录页";
+      if (openLabel) openLabel.textContent = loginIntl ? "在新窗口打开国际版登录页" : "在新窗口打开国内版登录页";
       elements.loginPollStatus.className = "poll-status";
       elements.loginPollStatus.innerHTML = '<span class="pulse-dot" aria-hidden="true"></span><span>等待登录完成</span>';
       setLoginStage("ready");
       pollLogin(generation);
     } catch (error) {
-      if (generation !== app.loginPollGeneration || !elements.loginDialog.open) return;
+      if (generation !== app.loginPollGeneration || elements.loginPage.hidden) return;
       setLoginStage("error", getErrorMessage(error));
     }
   }
@@ -1107,7 +1392,7 @@
   }
 
   async function pollLogin(generation) {
-    if (!app.loginId || generation !== app.loginPollGeneration || !elements.loginDialog.open) return;
+    if (!app.loginId || generation !== app.loginPollGeneration || elements.loginPage.hidden) return;
 
     try {
       const result = await api("/api/login/poll", {
@@ -1123,7 +1408,7 @@
         toast(result?.message || "账户添加成功");
         await loadState({ quiet: true });
         window.setTimeout(() => {
-          if (generation === app.loginPollGeneration && elements.loginDialog.open) elements.loginDialog.close();
+          if (generation === app.loginPollGeneration && !elements.loginPage.hidden) closeLoginPage();
         }, 700);
         return;
       }
@@ -1305,7 +1590,7 @@
     elements.runAll.addEventListener("click", runAllCheckins);
     elements.refreshPointsAll.addEventListener("click", refreshAllPoints);
     // 两个版本统一走浏览器授权登录（国际版为 workbuddy.ai 授权页）
-    elements.addAccount.addEventListener("click", startLogin);
+    elements.addAccount.addEventListener("click", () => openLoginPage());
     elements.search.addEventListener("input", renderAccounts);
     elements.statusFilter.addEventListener("change", renderAccounts);
     elements.scheduleForm.addEventListener("submit", saveSchedule);
@@ -1318,6 +1603,7 @@
       elements.lastUpdated.textContent = `上次同步 ${timeFormatter.format(new Date())}`;
       renderAll();
       writeSettingsDraft(draft);
+      persistViewVersion(app.viewVersion);
     });
     elements.scheduleEnabled.addEventListener("change", () => {
       app.settingsDirty = true;
@@ -1382,7 +1668,7 @@
       const button = event.target.closest("[data-state-action]");
       if (!button) return;
       if (button.dataset.stateAction === "error") loadState();
-      if (button.dataset.stateAction === "empty") startLogin();
+      if (button.dataset.stateAction === "empty") openLoginPage();
     });
 
     elements.openLogs.addEventListener("click", openLogDrawer);
@@ -1390,12 +1676,23 @@
     elements.drawerBackdrop.addEventListener("click", closeLogDrawer);
     elements.refreshLogs.addEventListener("click", loadLogs);
 
-    elements.loginForm.addEventListener("submit", (event) => {
-      if (event.submitter?.value === "cancel") stopLoginPolling();
-    });
-    elements.loginDialog.addEventListener("close", stopLoginPolling);
-    elements.loginDialog.addEventListener("cancel", stopLoginPolling);
+    elements.authForm.addEventListener("submit", submitAuth);
+    elements.logoutButton.addEventListener("click", logoutPanel);
+    elements.cancelLogin.addEventListener("click", closeLoginPage);
+    elements.exportAccounts.addEventListener("click", () => openBackupDialog("export"));
+    elements.importAccounts.addEventListener("click", () => openBackupDialog("import"));
+    elements.confirmExport.addEventListener("click", exportAccounts);
+    elements.confirmImport.addEventListener("click", importAccounts);
     elements.retryLogin.addEventListener("click", startLogin);
+    elements.loginVersionButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const next = button.dataset.loginVersion === "intl" ? "intl" : "cn";
+        if (next === app.loginVersion) return;
+        app.loginVersion = next;
+        renderLoginVersion();
+        startLogin();
+      });
+    });
     elements.copyLoginLink.addEventListener("click", copyLoginLink);
 
     elements.editForm.addEventListener("submit", saveNickname);
@@ -1417,5 +1714,5 @@
   refreshIcons();
   // 令牌有效期在服务端不会主动推送；页面首次渲染后按小时更新剩余时间文案。
   app.tokenExpiryTimer = window.setInterval(refreshTokenExpiry, 60 * 60 * 1000);
-  loadState();
+  bootApp();
 })();
