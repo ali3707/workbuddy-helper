@@ -118,7 +118,7 @@ certutil -hashfile WorkBuddyHelper-windows-amd64.exe SHA256
 # 上游官方仓库
 docker pull ghcr.io/autumnsentiment/workbuddy-helper:latest
 # 或锁定具体版本
-docker pull ghcr.io/autumnsentiment/workbuddy-helper:1.0.8
+docker pull ghcr.io/autumnsentiment/workbuddy-helper:1.0.9
 
 # 自己的 fork：在 fork 里打 tag 时，GITHUB_TOKEN 只能推送到自己命名空间
 docker pull ghcr.io/<你的GitHub用户名>/workbuddy-helper:latest
@@ -404,7 +404,7 @@ A：签到与积分使用 WorkBuddy 客户端当前调用的 billing 接口；�
 
 ## 更新日志
 
-### 未发布
+### v1.0.9（2026-11-03）
 
 - **修复国际版与国内版不能同时自动签到**：定时任务此前只执行「每日任务版本」对应的账号列表（国内版签到或国际版活跃），另一套列表永远等不到自动执行。现在每日定时会同时执行国内版签到与国际版活跃，两个列表分别记录当日执行标记、互不阻塞；某天某个版本已完成或列表为空时，不会影响另一个版本照常执行。
 - `--once` 同步改为对两套列表各执行一次；设置面板的「每日任务版本」改为「默认查看版本」，仅决定打开页面时默认展示的列表。
