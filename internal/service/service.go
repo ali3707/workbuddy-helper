@@ -329,7 +329,7 @@ func (s *Service) updateAccount(id string, fn func(*model.Account)) error {
 	return ErrAccountNotFound
 }
 
-// StartLogin 发起登录授权；version 为空按每日任务版本，cn=国内 CLI 授权，
+// StartLogin 发起登录授权；version 为空按默认版本，cn=国内 CLI 授权，
 // intl=国际版授权（authUrl 为 workbuddy.ai/login?platform=workbuddy-ai&state=...）
 func (s *Service) StartLogin(version string) (id, authURL string, err error) {
 	if version != model.ModeCN && version != model.ModeIntl {
@@ -691,7 +691,8 @@ func validActiveModel(name string) bool {
 	return activeModels[name]
 }
 
-// mode 返回当前版本模式：cn（每日签到）或 intl（活跃对话获取积分）
+// mode 返回默认版本（cn 或 intl）：用于默认登录版本与 RunAll 的空版本兜底。
+// 定时任务不再取该值，国内版签到与国际版活跃会同时执行。
 // apiclient 按账号域名返回对应客户端：国内版域名永远直连（clientCN），
 // 国际版域名走 clientIntl（代理可热更新）。
 func (s *Service) apiclientFor(a *model.Account) *client.Client {
@@ -1059,7 +1060,7 @@ func (s *Service) Points(id string) (model.PublicAccount, error) {
 
 // RunAll 对指定版本的启用账号批量执行：cn=全部签到，intl=全部活跃。
 // version 必须为 cn/intl（前端按当前查看的版本列表传入）；
-// 非法值回退每日任务版本（兼容旧调用方）。
+// 非法值回退默认版本（兼容旧调用方）。每日定时任务对两个版本各调用一次。
 func (s *Service) RunAll(version string) []model.PublicAccount {
 	// Manual clicks and the scheduler share the same account set. Serialize
 	// whole-batch runs so a second request cannot overlap the first one and
@@ -1098,6 +1099,16 @@ func (s *Service) RunAll(version string) []model.PublicAccount {
 			}
 		}
 		results = append(results, account)
+	}
+	return results
+}
+
+// RunAllVersions 依次对国内版与国际版启用账号执行每日任务（cn=签到，intl=活跃）。
+// 两个版本列表互不影响，同一天可以各自执行一次；--once 与定时任务都使用该语义。
+func (s *Service) RunAllVersions() []model.PublicAccount {
+	results := make([]model.PublicAccount, 0)
+	for _, version := range []string{model.ModeCN, model.ModeIntl} {
+		results = append(results, s.RunAll(version)...)
 	}
 	return results
 }
@@ -1174,32 +1185,95 @@ func (s *Service) runScheduledIfDue() {
 		return
 	}
 	day := now.Format("2006-01-02")
-	if settings.LastScheduledDay == day {
-		// LastScheduledDay is updated in memory before its persistence result is
-		// known.  If the state write failed, do not run the remote task again;
-		// verify the on-disk marker and retry only the save on a later tick.
-		persisted, loadErr := s.store.Load()
-		if loadErr != nil || persisted.Settings.LastScheduledDay != day {
-			s.mu.Lock()
-			// Re-check under the write lock because an account/settings mutation
-			// may have saved a newer state while the disk read was in flight.
-			if s.state.Settings.LastScheduledDay == day {
-				_ = s.saveLocked()
-			}
-			s.mu.Unlock()
+
+	// 定时任务同时覆盖两套账号列表：国内版签到 + 国际版活跃。
+	// 每个版本独立记录执行标记，一个版本已完成不会阻塞另一个版本；
+	// 此前只执行「每日任务版本」对应的列表，另一套列表永远等不到自动执行。
+	ran := false
+	for _, version := range []string{model.ModeCN, model.ModeIntl} {
+		if s.scheduledDayFor(version) == day {
+			continue
 		}
+		ran = true
+		if s.enabledAccountCount(version) == 0 {
+			// 该版本列表没有启用账号：只记录标记，避免每个 tick 重复扫描与刷日志。
+			s.markScheduledDay(version, day)
+			continue
+		}
+		if version == model.ModeIntl {
+			s.appendLog("info", "", "开始执行每日批量活跃任务")
+		} else {
+			s.appendLog("info", "", "开始执行每日批量签到和积分刷新")
+		}
+		s.RunAll(version)
+		// 先写内存标记再落盘：即使保存失败，后续 tick 也只补写状态，
+		// 不会重复发送远端签到/活跃请求。
+		s.markScheduledDay(version, day)
+	}
+	if !ran {
+		// 当日标记已在内存中但可能尚未落盘，这里只补写状态，不重复执行远端任务。
+		s.repairScheduledMarkers(day)
+	}
+}
+
+// scheduledDayFor 返回指定版本列表最近一次自动执行的北京日期（空表示从未执行）。
+func (s *Service) scheduledDayFor(version string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if version == model.ModeIntl {
+		return s.state.Settings.LastScheduledDayIntl
+	}
+	return s.state.Settings.LastScheduledDayCN
+}
+
+// enabledAccountCount 返回指定版本列表中的启用账号数。
+func (s *Service) enabledAccountCount(version string) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, a := range s.state.Accounts {
+		if a.Enabled && s.accountVersion(a) == version {
+			count++
+		}
+	}
+	return count
+}
+
+// markScheduledDay 记录指定版本列表当天的自动执行标记并尝试落盘。
+func (s *Service) markScheduledDay(version, day string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if version == model.ModeIntl {
+		s.state.Settings.LastScheduledDayIntl = day
+	} else {
+		s.state.Settings.LastScheduledDayCN = day
+	}
+	_ = s.saveLocked()
+}
+
+// repairScheduledMarkers 只补写当天的执行标记。定时任务发出后若状态保存失败，
+// 后续 tick 不应重复执行远端任务，但仍需把标记写回磁盘。
+func (s *Service) repairScheduledMarkers(day string) {
+	s.mu.RLock()
+	cnDay, intlDay := s.state.Settings.LastScheduledDayCN, s.state.Settings.LastScheduledDayIntl
+	s.mu.RUnlock()
+	if cnDay != day && intlDay != day {
 		return
 	}
-	taskMode := s.mode()
-	if taskMode == model.ModeIntl {
-		s.appendLog("info", "", "开始执行每日批量活跃任务")
-	} else {
-		s.appendLog("info", "", "开始执行每日批量签到和积分刷新")
+	persisted, err := s.store.Load()
+	if err != nil {
+		return
 	}
-	s.RunAll(taskMode)
+	if (cnDay != day || persisted.Settings.LastScheduledDayCN == day) &&
+		(intlDay != day || persisted.Settings.LastScheduledDayIntl == day) {
+		return
+	}
 	s.mu.Lock()
-	s.state.Settings.LastScheduledDay = day
-	_ = s.saveLocked()
+	// 持写锁重新判断：磁盘读取期间可能有账号/设置变更已成功落盘。
+	if (s.state.Settings.LastScheduledDayCN == day && persisted.Settings.LastScheduledDayCN != day) ||
+		(s.state.Settings.LastScheduledDayIntl == day && persisted.Settings.LastScheduledDayIntl != day) {
+		_ = s.saveLocked()
+	}
 	s.mu.Unlock()
 }
 

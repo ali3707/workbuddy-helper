@@ -154,10 +154,14 @@ type PointPackage struct {
 }
 
 type Settings struct {
-	ScheduleEnabled  bool   `json:"scheduleEnabled"`
-	ScheduleTime     string `json:"scheduleTime"`
-	LastScheduledDay string `json:"lastScheduledDay,omitempty"`
-	// Mode: cn（默认，每日签到）或 intl（国际版活跃获取）
+	ScheduleEnabled bool   `json:"scheduleEnabled"`
+	ScheduleTime    string `json:"scheduleTime"`
+	// 定时任务按版本列表分别记录最近一次自动执行的北京日期：
+	// 国内版签到与国际版活跃在同一天各自执行一次，互不阻塞。
+	LastScheduledDayCN   string `json:"lastScheduledDayCn,omitempty"`
+	LastScheduledDayIntl string `json:"lastScheduledDayIntl,omitempty"`
+	// Mode: 默认版本 cn（国内版签到）或 intl（国际版活跃）。
+	// 定时任务同时覆盖两套列表，该值只决定默认展示/默认登录版本。
 	Mode        string `json:"mode"`
 	ActiveModel string `json:"activeModel"`
 	// 活跃后积分复核延迟（分钟），积分非即时到账，默认 840（约 14 小时），可按实测调整

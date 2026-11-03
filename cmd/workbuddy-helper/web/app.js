@@ -75,6 +75,8 @@
     accounts: [],
     allAccounts: [],
     viewVersion: "cn",
+    // 首次加载设置后按「默认版本」对齐默认查看列表，之后尊重用户手动切换
+    viewInitialized: false,
     settings: {
       scheduleEnabled: false,
       scheduleTime: "09:15",
@@ -441,10 +443,6 @@
     return { key: "pending", label: "未活跃", className: "checkin-pending" };
   }
 
-  function currentMode() {
-    return app.settings.mode === "intl" ? "intl" : "cn";
-  }
-
   // 今日任务状态：国内版列表取签到，国际版列表取活跃（跟随当前查看的版本）
   function getDailyState(account) {
     return app.viewVersion === "intl" ? getActiveState(account) : getCheckinState(account);
@@ -705,7 +703,6 @@
   }
 
   function renderSchedule() {
-    const intl = currentMode() === "intl";
     const viewIntl = app.viewVersion === "intl";
     if (elements.versionSwitch) elements.versionSwitch.value = app.viewVersion;
     if (elements.pageTitle) elements.pageTitle.textContent = viewIntl ? "国际版账户" : "国内版账户";
@@ -713,7 +710,7 @@
     elements.scheduleTime.value = app.settings.scheduleTime;
     elements.scheduleTime.disabled = !app.settings.scheduleEnabled;
     elements.scheduleSummary.textContent = app.settings.scheduleEnabled
-      ? `每日 ${app.settings.scheduleTime} 执行${intl ? "活跃任务" : "签到任务"}`
+      ? `每日 ${app.settings.scheduleTime} 同时执行国内签到与国际活跃`
       : "当前已关闭";
     elements.versionMode.value = app.settings.mode;
     elements.activeModel.value = app.settings.activeModel;
@@ -807,11 +804,16 @@
       const normalized = normalizeState(payload);
       app.cnAccounts = normalized.cnAccounts;
       app.intlAccounts = normalized.intlAccounts;
-      app.accounts = app.viewVersion === "intl" ? app.intlAccounts : app.cnAccounts;
       if (settingsRevision === app.settingsRevision) {
         app.settings = normalized.settings;
         if (!app.settingsDirty) app.proxyDirty = false;
       }
+      // 首次拿到服务端设置后按「默认版本」决定默认展示的列表，之后尊重手动切换
+      if (!app.viewInitialized) {
+        app.viewInitialized = true;
+        app.viewVersion = app.settings.mode === "intl" ? "intl" : "cn";
+      }
+      app.accounts = app.viewVersion === "intl" ? app.intlAccounts : app.cnAccounts;
       app.loadError = "";
       setConnection("online", "服务正常");
       elements.lastUpdated.textContent = `上次同步 ${timeFormatter.format(new Date())}`;

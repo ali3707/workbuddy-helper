@@ -400,14 +400,14 @@ func TestScheduledRunRetriesMarkerWithoutRepeatingRemoteTask(t *testing.T) {
 	}
 	day := time.Now().In(locChina).Format("2006-01-02")
 	snapshot, _ := svc.Snapshot()
-	if snapshot.Settings.LastScheduledDay != day {
+	if snapshot.Settings.LastScheduledDayCN != day {
 		t.Fatalf("in-memory scheduled marker was not retained: %+v", snapshot.Settings)
 	}
 	persisted, err := st.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if persisted.Settings.LastScheduledDay == day {
+	if persisted.Settings.LastScheduledDayCN == day {
 		t.Fatal("scheduled marker unexpectedly persisted while state writes were blocked")
 	}
 
@@ -424,8 +424,150 @@ func TestScheduledRunRetriesMarkerWithoutRepeatingRemoteTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if persisted.Settings.LastScheduledDay != day {
+	if persisted.Settings.LastScheduledDayCN != day {
 		t.Fatalf("scheduled marker was not repaired: %+v", persisted.Settings)
+	}
+}
+
+// 定时任务必须同时覆盖国内版签到与国际版活跃：此前只执行「每日任务版本」
+// 对应的列表，另一套列表永远等不到自动执行。
+func TestScheduledRunCoversBothVersions(t *testing.T) {
+	chats, checkins := 0, 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/chat/completions":
+			chats++
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte(chatOK))
+		case "/v2/billing/meter/daily-checkin":
+			checkins++
+			writeEnvelope(w, http.StatusOK, 0, "ok", `{}`)
+		case "/v2/billing/meter/get-user-resource":
+			writeEnvelope(w, http.StatusOK, 0, "ok", pointsDataInitial)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	now := time.Now()
+	state := model.NewState()
+	state.Settings.ScheduleEnabled = true
+	state.Settings.ScheduleTime = now.In(locChina).Add(-2 * time.Minute).Format("15:04")
+	// 默认版本设为 cn：国际版列表仍须同时自动执行活跃任务。
+	state.Settings.Mode = model.ModeCN
+	state.Accounts = []model.Account{
+		{
+			ID: "cn1", UID: "u-cn", Domain: "codebuddy.cn", Version: model.ModeCN,
+			AccessToken: "access-cn", ExpiresAt: now.Add(time.Hour).Unix(),
+			Enabled: true, Status: "ready", CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			ID: "intl1", UID: "u-intl", Domain: "www.workbuddy.ai", Version: model.ModeIntl,
+			AccessToken: "access-intl", ExpiresAt: now.Add(time.Hour).Unix(),
+			Enabled: true, Status: "ready", CreatedAt: now, UpdatedAt: now,
+		},
+	}
+	st := store.New(t.TempDir())
+	if err := st.Save(state); err != nil {
+		t.Fatal(err)
+	}
+	c := client.New()
+	c.HTTP = upstream.Client()
+	c.ChatBaseCN = upstream.URL
+	c.BillingBaseCN = upstream.URL
+	c.GlobalBase = upstream.URL
+	c.GlobalBilling = upstream.URL
+	svc, err := New(st, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	svc.runScheduledIfDue()
+	if checkins != 1 || chats != 1 {
+		t.Fatalf("scheduled run did not cover both versions: checkins=%d chats=%d", checkins, chats)
+	}
+	day := time.Now().In(locChina).Format("2006-01-02")
+	snapshot, _ := svc.Snapshot()
+	if snapshot.Settings.LastScheduledDayCN != day || snapshot.Settings.LastScheduledDayIntl != day {
+		t.Fatalf("per-version markers not recorded: %+v", snapshot.Settings)
+	}
+	persisted, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Settings.LastScheduledDayCN != day || persisted.Settings.LastScheduledDayIntl != day {
+		t.Fatalf("per-version markers not persisted: %+v", persisted.Settings)
+	}
+
+	// 同一交易日再次触发：两个版本都已执行，不应重复发送远端请求。
+	svc.runScheduledIfDue()
+	if checkins != 1 || chats != 1 {
+		t.Fatalf("scheduled run repeated remote tasks: checkins=%d chats=%d", checkins, chats)
+	}
+}
+
+// 一个版本当天已完成时，另一个版本仍应独立执行。
+func TestScheduledRunDoesNotBlockOnFinishedVersion(t *testing.T) {
+	chats, checkins := 0, 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/chat/completions":
+			chats++
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte(chatOK))
+		case "/v2/billing/meter/daily-checkin":
+			checkins++
+			writeEnvelope(w, http.StatusOK, 0, "ok", `{}`)
+		case "/v2/billing/meter/get-user-resource":
+			writeEnvelope(w, http.StatusOK, 0, "ok", pointsDataInitial)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	now := time.Now()
+	day := now.In(locChina).Format("2006-01-02")
+	state := model.NewState()
+	state.Settings.ScheduleEnabled = true
+	state.Settings.ScheduleTime = now.In(locChina).Add(-2 * time.Minute).Format("15:04")
+	// 国际版当天已由定时任务完成，国内版尚未执行。
+	state.Settings.LastScheduledDayIntl = day
+	state.Accounts = []model.Account{
+		{
+			ID: "cn1", UID: "u-cn", Domain: "codebuddy.cn", Version: model.ModeCN,
+			AccessToken: "access-cn", ExpiresAt: now.Add(time.Hour).Unix(),
+			Enabled: true, Status: "ready", CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			ID: "intl1", UID: "u-intl", Domain: "www.workbuddy.ai", Version: model.ModeIntl,
+			AccessToken: "access-intl", ExpiresAt: now.Add(time.Hour).Unix(),
+			Enabled: true, Status: "ready", CreatedAt: now, UpdatedAt: now,
+		},
+	}
+	st := store.New(t.TempDir())
+	if err := st.Save(state); err != nil {
+		t.Fatal(err)
+	}
+	c := client.New()
+	c.HTTP = upstream.Client()
+	c.ChatBaseCN = upstream.URL
+	c.BillingBaseCN = upstream.URL
+	c.GlobalBase = upstream.URL
+	c.GlobalBilling = upstream.URL
+	svc, err := New(st, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	svc.runScheduledIfDue()
+	if checkins != 1 || chats != 0 {
+		t.Fatalf("finished version blocked the pending one: checkins=%d chats=%d", checkins, chats)
+	}
+	snapshot, _ := svc.Snapshot()
+	if snapshot.Settings.LastScheduledDayCN != day || snapshot.Settings.LastScheduledDayIntl != day {
+		t.Fatalf("unexpected markers: %+v", snapshot.Settings)
 	}
 }
 

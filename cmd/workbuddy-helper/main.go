@@ -80,8 +80,8 @@ func main() {
 	defer svc.StopScheduler()
 
 	if *once {
-		// --once 按每日任务版本执行（CLI 无视图概念）
-		results := svc.RunAll("")
+		// --once 同时执行国内版签到与国际版活跃（两套账号列表互不影响）
+		results := svc.RunAllVersions()
 		failed := 0
 		for _, a := range results {
 			fmt.Printf("%-20s %-14s balance=%d %s\n", a.DisplayName, a.Status, a.Balance, a.LastError)
