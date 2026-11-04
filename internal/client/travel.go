@@ -55,9 +55,24 @@ type TravelLocation struct {
 	Name string          `json:"name"`
 }
 
+// TravelConfig 是 /buddy/travel/config 的响应。
+//
+// 注意：官网并不读取响应里的 enabled 字段，而是直接用
+// `enabled = locations.length > 0` 推导（见 GrowthCenterPage 的 fetchConfig）。
+// 这里保留指针：字段缺省时不能当成「功能关闭」，否则 locations 有值也会被误判。
 type TravelConfig struct {
-	Enabled   bool             `json:"enabled"`
+	Enabled   *bool            `json:"enabled"`
 	Locations []TravelLocation `json:"locations"`
+}
+
+// Disabled 表示服务端显式关闭了旅行功能（字段存在且为 false）。
+func (c TravelConfig) Disabled() bool {
+	return c.Enabled != nil && !*c.Enabled
+}
+
+// Available 与官网一致：有地点就认为旅行可用。
+func (c TravelConfig) Available() bool {
+	return !c.Disabled() && len(c.Locations) > 0
 }
 
 type TravelStatus struct {
@@ -215,10 +230,13 @@ func (c *Client) TravelStatus(a *model.Account) (TravelStatus, error) {
 }
 
 // TravelDepart 派猫猫出行，返回服务端确认的状态。
+// locationID 为空时按官网「未指定地点」的形式发送空对象，由服务端自行选点。
 func (c *Client) TravelDepart(a *model.Account, locationID json.RawMessage) (string, error) {
-	data, err := c.growthDo(a, http.MethodPost, "/buddy/travel/depart", map[string]any{
-		"location_id": locationID,
-	})
+	body := map[string]any{}
+	if raw := strings.TrimSpace(string(locationID)); raw != "" && raw != "null" {
+		body["location_id"] = locationID
+	}
+	data, err := c.growthDo(a, http.MethodPost, "/buddy/travel/depart", body)
 	if err != nil {
 		return "", err
 	}
@@ -251,21 +269,42 @@ func (c *Client) TravelClaim(a *model.Account, recordID int64) (TravelClaimResul
 }
 
 // BuddyInfo 返回当前生效的 Buddy（没有则返回 nil）。
+// 服务端可能把 Buddy 放在 buddy / current_buddy 字段，或直接返回对象本身，这里都兼容。
 func (c *Client) BuddyInfo(a *model.Account) (*Buddy, error) {
 	data, err := c.growthDo(a, http.MethodGet, "/buddy/info", nil)
 	if err != nil {
 		return nil, err
 	}
-	var result struct {
-		Buddy *Buddy `json:"buddy"`
-	}
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, &Error{Kind: KindProtocol, Msg: "Buddy 信息格式不正确"}
-	}
-	if result.Buddy == nil || result.Buddy.InstanceID == 0 {
+	for _, key := range []string{"buddy", "current_buddy", "currentBuddy"} {
+		var envelope map[string]json.RawMessage
+		if json.Unmarshal(data, &envelope) != nil {
+			break
+		}
+		raw, ok := envelope[key]
+		if !ok {
+			continue
+		}
+		trimmed := strings.TrimSpace(string(raw))
+		if trimmed == "" || trimmed == "null" {
+			return nil, nil
+		}
+		if strings.HasPrefix(trimmed, "{") {
+			var buddy Buddy
+			if json.Unmarshal(raw, &buddy) == nil && buddy.InstanceID > 0 {
+				return &buddy, nil
+			}
+			return nil, nil
+		}
+		if id := parseCredit(raw); id > 0 {
+			return &Buddy{InstanceID: id}, nil
+		}
 		return nil, nil
 	}
-	return result.Buddy, nil
+	var direct Buddy
+	if json.Unmarshal(data, &direct) == nil && direct.InstanceID > 0 {
+		return &direct, nil
+	}
+	return nil, nil
 }
 
 // BuddyList 返回已拥有的 Buddy 列表。
@@ -274,13 +313,26 @@ func (c *Client) BuddyList(a *model.Account) ([]Buddy, error) {
 	if err != nil {
 		return nil, err
 	}
-	var result struct {
+	var envelope struct {
 		Buddies []Buddy `json:"buddies"`
+		List    []Buddy `json:"list"`
+		Items   []Buddy `json:"items"`
 	}
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, &Error{Kind: KindProtocol, Msg: "Buddy 列表格式不正确"}
+	if err := json.Unmarshal(data, &envelope); err == nil {
+		switch {
+		case len(envelope.Buddies) > 0:
+			return envelope.Buddies, nil
+		case len(envelope.List) > 0:
+			return envelope.List, nil
+		case len(envelope.Items) > 0:
+			return envelope.Items, nil
+		}
 	}
-	return result.Buddies, nil
+	var direct []Buddy
+	if err := json.Unmarshal(data, &direct); err == nil {
+		return direct, nil
+	}
+	return nil, nil
 }
 
 // BuddyQuota 返回开盲盒所需能量与可开次数。
@@ -323,16 +375,22 @@ func (c *Client) BuddyFirst(a *model.Account) (*Buddy, error) {
 	if err != nil {
 		return nil, err
 	}
-	var result struct {
-		Buddy *Buddy `json:"buddy"`
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(data, &envelope) == nil {
+		for _, key := range []string{"buddy", "instance"} {
+			if raw, ok := envelope[key]; ok && strings.HasPrefix(strings.TrimSpace(string(raw)), "{") {
+				var buddy Buddy
+				if json.Unmarshal(raw, &buddy) == nil && buddy.InstanceID > 0 {
+					return &buddy, nil
+				}
+			}
+		}
 	}
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, &Error{Kind: KindProtocol, Msg: "Buddy 领取结果格式不正确"}
+	var direct Buddy
+	if json.Unmarshal(data, &direct) == nil && direct.InstanceID > 0 {
+		return &direct, nil
 	}
-	if result.Buddy == nil || result.Buddy.InstanceID == 0 {
-		return nil, nil
-	}
-	return result.Buddy, nil
+	return nil, nil
 }
 
 // BuddyOpen 开盲盒，返回新获得的 Buddy 列表。
@@ -346,11 +404,20 @@ func (c *Client) BuddyOpen(a *model.Account, count int) ([]Buddy, error) {
 	}
 	var result struct {
 		Results []Buddy `json:"results"`
+		Buddies []Buddy `json:"buddies"`
+		Items   []Buddy `json:"items"`
 	}
 	if err := json.Unmarshal(data, &result); err != nil {
 		return nil, &Error{Kind: KindProtocol, Msg: "开盲盒结果格式不正确"}
 	}
-	return result.Results, nil
+	switch {
+	case len(result.Results) > 0:
+		return result.Results, nil
+	case len(result.Buddies) > 0:
+		return result.Buddies, nil
+	default:
+		return result.Items, nil
+	}
 }
 
 // BuddySwitch 切换当前生效的 Buddy。
