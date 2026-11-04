@@ -789,6 +789,9 @@
             </td>
             <td data-label="操作">
               <div class="row-actions">
+                ${intl ? "" : `<button class="icon-button${account.travelState === "no_buddy" ? " button-attention" : ""}" type="button" data-action="adopt-buddy" aria-label="为${escapeHTML(name)}领取 Buddy" data-tooltip="领取 Buddy" ${busy || !account.enabled ? "disabled" : ""}>
+                  <i data-lucide="gift" aria-hidden="true"></i>
+                </button>`}
                 ${intl ? "" : `<button class="icon-button" type="button" data-action="travel" aria-label="为${escapeHTML(name)}派猫猫旅行" data-tooltip="旅行" ${busy || !account.enabled ? "disabled" : ""}>
                   <i data-lucide="plane-takeoff" aria-hidden="true"></i>
                 </button>`}
@@ -988,6 +991,7 @@
       checkin: "签到",
       active: "活跃会话",
       travel: "旅行",
+      "adopt-buddy": "领取 Buddy",
       points: "积分查询",
       toggle: account.enabled ? "停用" : "启用",
       delete: "删除",
@@ -1001,6 +1005,8 @@
         result = await api(`/api/accounts/${encodeURIComponent(account.id)}/active`, { method: "POST" });
       } else if (action === "travel") {
         result = await api(`/api/accounts/${encodeURIComponent(account.id)}/travel`, { method: "POST" });
+      } else if (action === "adopt-buddy") {
+        result = await api(`/api/accounts/${encodeURIComponent(account.id)}/adopt-buddy`, { method: "POST" });
       } else if (action === "points") {
         result = await api(`/api/accounts/${encodeURIComponent(account.id)}/points`, { method: "POST" });
       } else if (action === "toggle") {
@@ -1022,7 +1028,8 @@
       );
       await loadState({ quiet: true });
     } catch (error) {
-      toast(`${actionNames[action]}失败：${getErrorMessage(error)}`, "error");
+      const actionLabel = action === "adopt-buddy" ? "领取 Buddy " : actionNames[action];
+      toast(`${actionLabel}失败：${getErrorMessage(error)}`, "error");
       renderAccounts();
     } finally {
       app.busyAccounts.delete(account.id);

@@ -23,13 +23,13 @@ import (
 )
 
 type Server struct {
-	service           *service.Service
-	web               fs.FS
+	service      *service.Service
+	web          fs.FS
 	host         string
 	version      string
 	allowedHosts []string
 	// panel 面板级账号密码认证（统一使用页面登录，不再使用浏览器 Basic Auth）
-	panel   *auth.Manager
+	panel    *auth.Manager
 	panelErr error
 	shutdown func()
 }
@@ -740,6 +740,7 @@ func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var account model.PublicAccount
+	var message string
 	var err error
 	switch parts[1] {
 	case "checkin":
@@ -751,15 +752,21 @@ func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request) {
 		account, err = s.service.Points(id)
 	case "travel":
 		account, err = s.service.Travel(id)
+	case "adopt-buddy":
+		account, message, err = s.service.AdoptBuddy(id)
 	default:
 		writeError(w, http.StatusNotFound, "接口不存在")
 		return
 	}
 	if err != nil {
-		writeJSON(w, statusFor(err), map[string]any{"error": friendlyError(err), "account": account})
+		writeJSON(w, statusFor(err), map[string]any{"error": friendlyError(err), "account": account, "message": message})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"account": account})
+	payload := map[string]any{"account": account}
+	if message != "" {
+		payload["message"] = message
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func (s *Server) writeAccountMutationError(w http.ResponseWriter, err error) {

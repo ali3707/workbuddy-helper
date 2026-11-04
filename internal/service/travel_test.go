@@ -314,3 +314,80 @@ func TestTravelDepartsWithoutLocationsFallback(t *testing.T) {
 		t.Fatalf("fallback depart should omit location_id, got %s", gotBody)
 	}
 }
+
+// 手动「领取 Buddy」是用户明确操作，不应被「自动领养」开关或冷却拦住。
+func TestAdoptBuddyManualIgnoresAutoAdoptSetting(t *testing.T) {
+	var mu sync.Mutex
+	opened := 0
+	switched := int64(0)
+
+	svc, closeUpstream := newAccountService(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/activity/growth/buddy/info":
+			growthEnvelope(w, `{"buddy":null}`)
+		case "/activity/growth/buddy/list":
+			growthEnvelope(w, `{"buddies":[]}`)
+		case "/activity/growth/buddy/first":
+			growthEnvelope(w, `{"buddy":null}`)
+		case "/activity/growth/buddy/agreement":
+			if r.Method == http.MethodPost {
+				growthEnvelope(w, `{}`)
+				return
+			}
+			growthEnvelope(w, `{"agreed":false}`)
+		case "/activity/growth/buddy/quota":
+			growthEnvelope(w, `{"cost_per_open":10,"affordable":1,"max_open_count":5}`)
+		case "/activity/growth/buddy/open":
+			mu.Lock()
+			opened++
+			mu.Unlock()
+			growthEnvelope(w, `{"results":[{"instance_id":77,"name":"团子"}]}`)
+		case "/activity/growth/buddy/switch":
+			var body struct {
+				InstanceID int64 `json:"instance_id"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			mu.Lock()
+			switched = body.InstanceID
+			mu.Unlock()
+			growthEnvelope(w, `{}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	defer closeUpstream()
+
+	// 默认 TravelAutoAdopt = false，手动领取仍应成功
+	account, message, err := svc.AdoptBuddy("a1")
+	if err != nil {
+		t.Fatalf("manual adopt failed: %v", err)
+	}
+	mu.Lock()
+	openCalls, gotSwitch := opened, switched
+	mu.Unlock()
+	if openCalls != 1 || gotSwitch != 77 {
+		t.Fatalf("unexpected adopt calls: open=%d switch=%d", openCalls, gotSwitch)
+	}
+	if !strings.Contains(message, "团子") {
+		t.Fatalf("unexpected message: %s", message)
+	}
+	if account.ID != "a1" || account.TravelState == "no_buddy" {
+		t.Fatalf("unexpected account state: %+v", account)
+	}
+}
+
+func TestAdoptBuddyRejectsInternationalAccount(t *testing.T) {
+	svc, closeUpstream := newAccountService(t, func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	})
+	defer closeUpstream()
+	if err := svc.updateAccount("a1", func(a *model.Account) {
+		a.Version = model.ModeIntl
+		a.Domain = "www.workbuddy.ai"
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.AdoptBuddy("a1"); err == nil || !strings.Contains(err.Error(), "国内版") {
+		t.Fatalf("international account was not rejected: %v", err)
+	}
+}

@@ -265,6 +265,12 @@ select:disabled {
   color: var(--red);
 }
 
+/* 缺 Buddy 时提示该行可以先领养 */
+.icon-button.button-attention {
+  color: var(--amber);
+  background: var(--amber-soft);
+}
+
 .button-full {
   width: 100%;
 }

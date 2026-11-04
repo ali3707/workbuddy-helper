@@ -34,6 +34,41 @@ func (s *Service) Travel(id string) (model.PublicAccount, error) {
 	return s.travelAccount(a)
 }
 
+// AdoptBuddy 手动为国内版账号领取/启用 Buddy。
+// 手动点击视为用户明确同意成长中心活动协议，因此不受「自动领养」开关与冷却限制。
+func (s *Service) AdoptBuddy(id string) (model.PublicAccount, string, error) {
+	lock := s.accountLock(id)
+	lock.Lock()
+	defer lock.Unlock()
+
+	account, err := s.getAccount(id)
+	if err != nil {
+		return account.Public(), "", err
+	}
+	if account.VersionMode() != model.ModeCN {
+		return account.Public(), "", fmt.Errorf("%w：Buddy 仅支持国内版账号", ErrAccountModeMismatch)
+	}
+	a, err := s.prepareAccount(id)
+	if err != nil {
+		return a.Public(), "", err
+	}
+
+	buddy, adoptErr := s.adoptBuddy(&a, true)
+	if adoptErr != nil {
+		updated, _ := s.getAccount(id)
+		return updated.Public(), "", adoptErr
+	}
+	// 之前因缺 Buddy 被标记的失败状态清掉，方便紧接着手动派发。
+	_ = s.updateAccount(id, func(dst *model.Account) {
+		if dst.TravelState == "no_buddy" || dst.TravelState == "error" {
+			dst.TravelState = ""
+			dst.TravelMsg = ""
+		}
+	})
+	updated, _ := s.getAccount(id)
+	return updated.Public(), "Buddy 已就绪：" + fallback(buddy.Name, "未命名"), nil
+}
+
 // RunTravelAll 对全部启用的国内版账号执行一轮旅行（手动「全部旅行」）。
 func (s *Service) RunTravelAll() []model.PublicAccount {
 	s.travelMu.Lock()
@@ -290,14 +325,24 @@ func (s *Service) claimTravel(a *model.Account, status client.TravelStatus) (mod
 }
 
 // ensureBuddy 在没有可用 Buddy 时自动领养（列表切换 → 新手领取 → 同意协议 → 开盲盒）。
+// ensureBuddy 是自动流程的包装：受「无 Buddy 时自动领养」开关与冷却限制。
 func (s *Service) ensureBuddy(a *model.Account) (bool, error) {
-	enabled, err := s.travelAutoAdopt()
-	if err != nil || !enabled {
-		return false, fmt.Errorf("该账号没有可用 Buddy；可在设置中开启「无 Buddy 时自动领养」")
-	}
-	// 冷却：避免每次派发都触发一轮开盒
-	if last := a.TravelLastAdopt; !last.IsZero() && time.Since(last) < travelAdoptCooldown {
-		return false, fmt.Errorf("刚刚已尝试领取 Buddy，请稍后再试")
+	buddy, err := s.adoptBuddy(a, false)
+	return buddy != nil, err
+}
+
+// adoptBuddy 在没有可用 Buddy 时自动领养（列表切换 → 新手领取 → 同意协议 → 开盲盒）。
+// force=true 表示用户手动点击「领取 Buddy」，视为明确同意，忽略开关与冷却。
+func (s *Service) adoptBuddy(a *model.Account, force bool) (*client.Buddy, error) {
+	if !force {
+		enabled, err := s.travelAutoAdopt()
+		if err != nil || !enabled {
+			return nil, fmt.Errorf("该账号没有可用 Buddy；可在设置中开启「无 Buddy 时自动领养」")
+		}
+		// 冷却：避免每次派发都触发一轮开盒
+		if last := a.TravelLastAdopt; !last.IsZero() && time.Since(last) < travelAdoptCooldown {
+			return nil, fmt.Errorf("刚刚已尝试领取 Buddy，请稍后再试")
+		}
 	}
 	_ = s.updateAccount(a.ID, func(dst *model.Account) { dst.TravelLastAdopt = time.Now() })
 
@@ -305,7 +350,7 @@ func (s *Service) ensureBuddy(a *model.Account) (bool, error) {
 		return c.BuddyInfo(a)
 	}); infoErr == nil && buddy != nil {
 		// 前置检查与这里之间可能刚被用户/其它会话领养，直接视为已就绪。
-		return true, nil
+		return buddy, nil
 	}
 
 	list, listErr := travelCall(s, a, func(c *client.Client) ([]client.Buddy, error) {
@@ -320,7 +365,8 @@ func (s *Service) ensureBuddy(a *model.Account) (bool, error) {
 				return c.BuddySwitch(a, buddy.InstanceID)
 			}); err == nil {
 				s.appendLog("info", a.ID, "已切换为现有 Buddy："+fallback(buddy.Name, "未命名"))
-				return true, nil
+				item := buddy
+				return &item, nil
 			}
 		}
 	}
@@ -332,7 +378,7 @@ func (s *Service) ensureBuddy(a *model.Account) (bool, error) {
 			return c.BuddySwitch(a, buddy.InstanceID)
 		})
 		s.appendLog("info", a.ID, "已领取新手 Buddy："+fallback(buddy.Name, "未命名"))
-		return true, nil
+		return buddy, nil
 	}
 
 	agreed, agreeErr := travelCall(s, a, func(c *client.Client) (bool, error) {
@@ -342,25 +388,25 @@ func (s *Service) ensureBuddy(a *model.Account) (bool, error) {
 		if err := travelCall0(s, a, func(c *client.Client) error {
 			return c.SignBuddyAgreement(a)
 		}); err != nil {
-			return false, fmt.Errorf("自动同意活动协议失败：%w", err)
+			return nil, fmt.Errorf("同意活动协议失败：%w", err)
 		}
-		s.appendLog("warn", a.ID, "已代同意成长中心活动协议（用于自动领养 Buddy）")
+		s.appendLog("warn", a.ID, "已代同意成长中心活动协议（用于领取 Buddy）")
 	}
 
 	quota, quotaErr := travelCall(s, a, func(c *client.Client) (client.BuddyQuota, error) {
 		return c.BuddyQuota(a)
 	})
 	if quotaErr != nil {
-		return false, quotaErr
+		return nil, quotaErr
 	}
 	if quota.Affordable <= 0 {
-		return false, fmt.Errorf("没有可用 Buddy，且开盲盒能量不足（需要 %d）", quota.CostPerOpen)
+		return nil, fmt.Errorf("没有可用 Buddy，且开盲盒能量不足（需要 %d）", quota.CostPerOpen)
 	}
 	opened, openErr := travelCall(s, a, func(c *client.Client) ([]client.Buddy, error) {
 		return c.BuddyOpen(a, 1)
 	})
 	if openErr != nil {
-		return false, openErr
+		return nil, openErr
 	}
 	for _, buddy := range opened {
 		if buddy.InstanceID == 0 {
@@ -369,12 +415,13 @@ func (s *Service) ensureBuddy(a *model.Account) (bool, error) {
 		if err := travelCall0(s, a, func(c *client.Client) error {
 			return c.BuddySwitch(a, buddy.InstanceID)
 		}); err != nil {
-			return false, fmt.Errorf("开盲盒成功但切换 Buddy 失败：%w", err)
+			return nil, fmt.Errorf("开盲盒成功但切换 Buddy 失败：%w", err)
 		}
 		s.appendLog("info", a.ID, "已自动领养并启用 Buddy："+fallback(buddy.Name, "未命名"))
-		return true, nil
+		item := buddy
+		return &item, nil
 	}
-	return false, fmt.Errorf("开盲盒未返回可用 Buddy")
+	return nil, fmt.Errorf("开盲盒未返回可用 Buddy")
 }
 
 func (s *Service) travelAutoAdopt() (bool, error) {
