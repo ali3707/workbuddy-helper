@@ -64,6 +64,7 @@ type Service struct {
 	schedulerOnce sync.Once
 	scheduleMu    sync.Mutex
 	runMu         sync.Mutex
+	travelMu      sync.Mutex
 }
 
 func New(st *store.Store, c *client.Client) (*Service, error) {
@@ -638,6 +639,12 @@ func (s *Service) UpdateSettings(patch model.SettingsPatch) (model.Settings, err
 	if patch.ActivePrompt != nil {
 		next.ActivePrompt = strings.TrimSpace(*patch.ActivePrompt)
 	}
+	if patch.TravelEnabled != nil {
+		next.TravelEnabled = *patch.TravelEnabled
+	}
+	if patch.TravelAutoAdopt != nil {
+		next.TravelAutoAdopt = *patch.TravelAutoAdopt
+	}
 	if len([]rune(next.ActivePrompt)) > 200 {
 		return model.Settings{}, settingsValidation("activePrompt 最多 200 个字符")
 	}
@@ -1157,6 +1164,19 @@ func (s *Service) StartScheduler() {
 				case <-ticker.C:
 					s.runScheduledIfDue()
 					s.runPendingRechecks()
+				case <-s.stop:
+					return
+				}
+			}
+		}()
+		// 自动旅行独立周期：默认每分钟检查一次，内部按 30 分钟重试节流。
+		go func() {
+			ticker := time.NewTicker(time.Minute)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					s.runTravelIfDue()
 				case <-s.stop:
 					return
 				}

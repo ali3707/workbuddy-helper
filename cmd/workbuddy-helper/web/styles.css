@@ -705,6 +705,31 @@ select:disabled {
   white-space: nowrap;
 }
 
+.travel-meta {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.travel-meta.travel-active {
+  color: var(--blue);
+}
+
+.travel-meta.travel-arrived {
+  color: var(--amber);
+}
+
+.travel-meta.travel-done {
+  color: var(--green);
+}
+
+.travel-meta.travel-error {
+  color: var(--red);
+}
+
 .status-badge::before {
   width: 6px;
   height: 6px;

@@ -73,6 +73,10 @@
               <i data-lucide="calendar-check-2" aria-hidden="true"></i>
               <span id="run-all-label">全部签到</span>
             </button>
+            <button class="button button-secondary" id="run-travel" type="button" hidden>
+              <i data-lucide="plane-takeoff" aria-hidden="true"></i>
+              <span>全部旅行</span>
+            </button>
           </div>
         </section>
 
@@ -225,6 +229,28 @@
                   <i data-lucide="clock" aria-hidden="true"></i>
                   <input id="schedule-time" name="scheduleTime" type="time" value="09:15" required />
                 </div>
+              </div>
+
+              <div class="form-row switch-row" id="travel-enabled-row" hidden>
+                <div>
+                  <label for="travel-enabled">自动旅行（派猫猫）</label>
+                  <p>仅国内版；每分钟检查，到达后自动领取积分</p>
+                </div>
+                <label class="switch">
+                  <input id="travel-enabled" name="travelEnabled" type="checkbox" />
+                  <span aria-hidden="true"></span>
+                </label>
+              </div>
+
+              <div class="form-row switch-row" id="travel-adopt-row" hidden>
+                <div>
+                  <label for="travel-auto-adopt">无 Buddy 时自动领养</label>
+                  <p>自动开盲盒/切换 Buddy，并代同意活动协议</p>
+                </div>
+                <label class="switch">
+                  <input id="travel-auto-adopt" name="travelAutoAdopt" type="checkbox" />
+                  <span aria-hidden="true"></span>
+                </label>
               </div>
 
               <div class="form-row">

@@ -22,6 +22,11 @@
     refreshState: document.querySelector("#refresh-state"),
     runAll: document.querySelector("#run-all"),
     runAllLabel: document.querySelector("#run-all-label"),
+    runTravel: document.querySelector("#run-travel"),
+    travelEnabled: document.querySelector("#travel-enabled"),
+    travelAutoAdopt: document.querySelector("#travel-auto-adopt"),
+    travelEnabledRow: document.querySelector("#travel-enabled-row"),
+    travelAdoptRow: document.querySelector("#travel-adopt-row"),
     refreshPointsAll: document.querySelector("#refresh-points-all"),
     addAccount: document.querySelector("#add-account"),
     scheduleForm: document.querySelector("#schedule-form"),
@@ -119,6 +124,8 @@
       recheckDelayMinutes: 840,
       proxyUrl: "",
       activePrompt: "",
+      travelEnabled: false,
+      travelAutoAdopt: false,
     },
     isLoading: true,
     loadError: "",
@@ -408,6 +415,8 @@
         recheckDelayMinutes: clampRecheckDelay(parseNumber(rawSettings.recheckDelayMinutes) ?? 840),
         proxyUrl: String(firstDefined(rawSettings.proxyUrl, source.proxyUrl, "") || ""),
         activePrompt: String(firstDefined(rawSettings.activePrompt, source.activePrompt, "") || ""),
+        travelEnabled: parseBoolean(firstDefined(rawSettings.travelEnabled, source.travelEnabled), false),
+        travelAutoAdopt: parseBoolean(firstDefined(rawSettings.travelAutoAdopt, source.travelAutoAdopt), false),
       },
     };
   }
@@ -595,6 +604,54 @@
     };
   }
 
+  // 旅行状态文案：traveling/arrived/done/error/未旅行
+  function travelInfo(account) {
+    const state = String(account.travelState || "");
+    const place = String(account.travelLocation || "").trim();
+    const reward = Math.trunc(Number(account.travelReward) || 0);
+    const arriveMs = Number(account.travelArriveAt) > 0 ? Number(account.travelArriveAt) * 1000 : 0;
+    const message = String(account.travelMessage || "").trim();
+    const join = (parts) => parts.filter(Boolean).join(" · ");
+    if (state === "traveling") {
+      const base = join([place, reward > 0 ? `预计 +${reward}` : "旅行中"]);
+      return { base, arriveMs, className: "travel-active", title: message || base, text: base };
+    }
+    if (state === "arrived") {
+      const base = join([place, reward > 0 ? `预计 +${reward}` : "已到达", "待领取"]);
+      return { base, arriveMs: 0, className: "travel-arrived", title: message || base, text: base };
+    }
+    if (state === "done") {
+      const base = join([place, reward > 0 ? `+${reward}` : "已完成"]);
+      return { base: base || "旅行已完成", arriveMs: 0, className: "travel-done", title: message || base, text: base || "旅行已完成" };
+    }
+    if (state === "error" || state === "no_buddy") {
+      const text = state === "no_buddy" ? "无 Buddy" : "旅行失败";
+      return { base: text, arriveMs: 0, className: "travel-error", title: message || text, text };
+    }
+    return { base: "未旅行", arriveMs: 0, className: "travel-idle", title: "未旅行", text: "未旅行" };
+  }
+
+  function travelRemaining(arriveMs, now = Date.now()) {
+    if (!arriveMs || arriveMs <= 0) return "";
+    const diff = arriveMs - now;
+    if (diff <= 0) return "即将到达";
+    const totalMinutes = Math.max(1, Math.ceil(diff / 60000));
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (hours > 0 && minutes > 0) return `剩余 ${hours} 小时 ${minutes} 分钟`;
+    if (hours > 0) return `剩余 ${hours} 小时`;
+    return `剩余 ${minutes} 分钟`;
+  }
+
+  function refreshTravelMeta() {
+    document.querySelectorAll("[data-travel-arrive]").forEach((node) => {
+      const arriveMs = Number(node.dataset.travelArrive) || 0;
+      const base = node.dataset.travelBase || "";
+      const remaining = travelRemaining(arriveMs);
+      node.textContent = remaining ? `${base} · ${remaining}` : base;
+    });
+  }
+
   function renderSummary() {
     const intl = app.viewVersion === "intl";
     const enabled = app.accounts.filter((account) => account.enabled).length;
@@ -694,6 +751,12 @@
         const pointsMeta = recheckMeta || formatUpdatedAt(account.updatedAt);
         const dailyActionIcon = intl ? "send-horizontal" : "calendar-check-2";
         const dailyActionLabel = intl ? "活跃" : "签到";
+        const travel = travelInfo(account);
+        const travelRemainingText = travel.arriveMs ? travelRemaining(travel.arriveMs) : "";
+        const travelText = travelRemainingText ? `${travel.base} · ${travelRemainingText}` : travel.base;
+        const travelHtml = intl
+          ? ""
+          : `<span class="travel-meta ${travel.className}" title="${escapeHTML(travel.title)}"${travel.arriveMs ? ` data-travel-arrive="${travel.arriveMs}" data-travel-base="${escapeHTML(travel.base)}"` : ""}>${escapeHTML(travelText)}</span>`;
 
         return `
           <tr class="${account.enabled ? "" : "is-disabled"} ${busy ? "row-busy" : ""}" data-account-id="${escapeHTML(account.id)}">
@@ -712,6 +775,7 @@
             </td>
             <td data-label="${intl ? "今日活跃" : "今日签到"}">
               <span class="checkin-label ${daily.className}">${escapeHTML(daily.label)}</span>
+              ${travelHtml}
             </td>
             <td data-label="积分">
               <strong class="points-value">${escapeHTML(formatPoints(account.points))}</strong>
@@ -725,6 +789,9 @@
             </td>
             <td data-label="操作">
               <div class="row-actions">
+                ${intl ? "" : `<button class="icon-button" type="button" data-action="travel" aria-label="为${escapeHTML(name)}派猫猫旅行" data-tooltip="旅行" ${busy || !account.enabled ? "disabled" : ""}>
+                  <i data-lucide="plane-takeoff" aria-hidden="true"></i>
+                </button>`}
                 <button class="icon-button" type="button" data-action="${intl ? "active" : "checkin"}" aria-label="为${escapeHTML(name)}${intl ? "发送活跃会话" : "签到"}" data-tooltip="${dailyActionLabel}" ${busy || !account.enabled ? "disabled" : ""}>
                   <i data-lucide="${dailyActionIcon}" aria-hidden="true"></i>
                 </button>
@@ -777,6 +844,13 @@
     // 按钮文案跟随当前查看的版本列表（签到=国内列表 / 活跃=国际列表）
     elements.runAllLabel.textContent = viewIntl ? "全部活跃" : "全部签到";
     if (elements.colDaily) elements.colDaily.textContent = viewIntl ? "今日活跃" : "今日签到";
+    // 自动旅行仅国内版
+    const showTravel = !viewIntl;
+    if (elements.runTravel) elements.runTravel.hidden = !showTravel;
+    if (elements.travelEnabledRow) elements.travelEnabledRow.hidden = !showTravel;
+    if (elements.travelAdoptRow) elements.travelAdoptRow.hidden = !showTravel;
+    if (elements.travelEnabled) elements.travelEnabled.checked = Boolean(app.settings.travelEnabled);
+    if (elements.travelAutoAdopt) elements.travelAutoAdopt.checked = Boolean(app.settings.travelAutoAdopt);
   }
 
   // 设置面板草稿：切版本/刷新时不丢用户未保存的编辑
@@ -790,6 +864,8 @@
       recheckDelay: elements.recheckDelay.value,
       proxyScheme: elements.proxyScheme.value,
       proxyHost: elements.proxyHost.value,
+      travelEnabled: elements.travelEnabled.checked,
+      travelAutoAdopt: elements.travelAutoAdopt.checked,
     };
   }
 
@@ -803,6 +879,8 @@
     elements.recheckDelay.value = draft.recheckDelay;
     elements.proxyScheme.value = draft.proxyScheme;
     elements.proxyHost.value = draft.proxyHost;
+    elements.travelEnabled.checked = draft.travelEnabled;
+    elements.travelAutoAdopt.checked = draft.travelAutoAdopt;
     syncProxyInput();
   }
 
@@ -909,6 +987,7 @@
     const actionNames = {
       checkin: "签到",
       active: "活跃会话",
+      travel: "旅行",
       points: "积分查询",
       toggle: account.enabled ? "停用" : "启用",
       delete: "删除",
@@ -920,6 +999,8 @@
         result = await api(`/api/accounts/${encodeURIComponent(account.id)}/checkin`, { method: "POST" });
       } else if (action === "active") {
         result = await api(`/api/accounts/${encodeURIComponent(account.id)}/active`, { method: "POST" });
+      } else if (action === "travel") {
+        result = await api(`/api/accounts/${encodeURIComponent(account.id)}/travel`, { method: "POST" });
       } else if (action === "points") {
         result = await api(`/api/accounts/${encodeURIComponent(account.id)}/points`, { method: "POST" });
       } else if (action === "toggle") {
@@ -930,7 +1011,15 @@
       } else if (action === "delete") {
         result = await api(`/api/accounts/${encodeURIComponent(account.id)}`, { method: "DELETE" });
       }
-      toast(result?.message || (action === "active" ? "会话已发送，等待积分复核" : `${actionNames[action]}成功`));
+      const travelMessage = result?.account?.travelMessage;
+      toast(
+        result?.message ||
+          (action === "active"
+            ? "会话已发送，等待积分复核"
+            : action === "travel" && travelMessage
+              ? travelMessage
+              : `${actionNames[action]}成功`),
+      );
       await loadState({ quiet: true });
     } catch (error) {
       toast(`${actionNames[action]}失败：${getErrorMessage(error)}`, "error");
@@ -938,6 +1027,31 @@
     } finally {
       app.busyAccounts.delete(account.id);
       renderAccounts();
+    }
+  }
+
+  async function runTravelAll() {
+    if (!app.accounts.some((account) => account.enabled)) {
+      toast("没有可执行的已启用账户", "info");
+      return;
+    }
+    if (elements.runTravel.disabled) return;
+    setButtonBusy(elements.runTravel, true, "旅行中");
+    try {
+      const result = await api("/api/travel/run-all", { method: "POST", body: JSON.stringify({}) });
+      const accounts = Array.isArray(result?.accounts) ? result.accounts : [];
+      const traveling = accounts.filter((account) => account.travelState === "traveling" || account.travelState === "arrived").length;
+      const done = accounts.filter((account) => account.travelState === "done").length;
+      const failed = accounts.length - traveling - done;
+      toast(
+        `旅行已处理 ${integerFormatter.format(accounts.length)} 个账户：进行中 ${integerFormatter.format(traveling)}、已完成 ${integerFormatter.format(done)}${failed ? `、失败 ${integerFormatter.format(failed)}` : ""}`,
+        failed ? "error" : "success",
+      );
+      await loadState({ quiet: true });
+    } catch (error) {
+      toast(`批量旅行失败：${getErrorMessage(error)}`, "error");
+    } finally {
+      setButtonBusy(elements.runTravel, false);
     }
   }
 
@@ -1043,12 +1157,14 @@
     }
     const proxyUrl = joinProxyURL(elements.proxyScheme.value, elements.proxyHost.value);
     const activePrompt = elements.activePrompt.value.trim().slice(0, 200);
+    const travelEnabled = elements.travelEnabled.checked;
+    const travelAutoAdopt = elements.travelAutoAdopt.checked;
     const settingsRevision = app.settingsRevision;
     const proxyRevision = app.proxyRevision;
     setButtonBusy(elements.saveSchedule, true, "保存中");
 
     try {
-      const settingsPayload = { scheduleEnabled, scheduleTime, activeModel, recheckDelayMinutes, activePrompt };
+      const settingsPayload = { scheduleEnabled, scheduleTime, activeModel, recheckDelayMinutes, activePrompt, travelEnabled, travelAutoAdopt };
       // 公开设置会隐藏代理认证信息。只有用户实际编辑过代理字段时才提交，
       // 避免保存其他设置时用脱敏 URL 覆盖 data/proxy.conf 中的真实凭据。
       if (app.proxyDirty) settingsPayload.proxyUrl = proxyUrl;
@@ -1069,6 +1185,8 @@
         recheckDelayMinutes: clampRecheckDelay(parseNumber(saved.recheckDelayMinutes) ?? recheckDelayMinutes),
         proxyUrl: String(firstDefined(saved.proxyUrl, proxyUrl, "") || ""),
         activePrompt: String(firstDefined(saved.activePrompt, activePrompt, "") || ""),
+        travelEnabled: parseBoolean(firstDefined(saved.travelEnabled, travelEnabled), false),
+        travelAutoAdopt: parseBoolean(firstDefined(saved.travelAutoAdopt, travelAutoAdopt), false),
       };
       app.proxyDirty = hasNewerProxyDraft;
       app.settingsDirty = hasNewerDraft;
@@ -1588,6 +1706,7 @@
   function bindEvents() {
     elements.refreshState.addEventListener("click", () => loadState({ quiet: true }));
     elements.runAll.addEventListener("click", runAllCheckins);
+    if (elements.runTravel) elements.runTravel.addEventListener("click", runTravelAll);
     elements.refreshPointsAll.addEventListener("click", refreshAllPoints);
     // 两个版本统一走浏览器授权登录（国际版为 workbuddy.ai 授权页）
     elements.addAccount.addEventListener("click", () => openLoginPage());
@@ -1714,5 +1833,6 @@
   refreshIcons();
   // 令牌有效期在服务端不会主动推送；页面首次渲染后按小时更新剩余时间文案。
   app.tokenExpiryTimer = window.setInterval(refreshTokenExpiry, 60 * 60 * 1000);
+  window.setInterval(refreshTravelMeta, 60 * 1000);
   bootApp();
 })();

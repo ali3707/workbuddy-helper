@@ -89,6 +89,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/login/poll", s.handleLoginPoll)
 	mux.HandleFunc("POST /api/run-all", s.handleRunAll)
 	mux.HandleFunc("POST /api/refresh-points", s.handleRefreshPoints)
+	mux.HandleFunc("POST /api/travel/run-all", s.handleTravelRunAll)
 	mux.HandleFunc("POST /api/accounts/export", s.handleAccountsExport)
 	mux.HandleFunc("POST /api/accounts/import", s.handleAccountsImport)
 	mux.HandleFunc("GET /api/auth/state", s.handleAuthState)
@@ -581,6 +582,10 @@ func (s *Server) handleRunAll(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"accounts": s.service.RunAll(strings.TrimSpace(body.Version))})
 }
 
+func (s *Server) handleTravelRunAll(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"accounts": s.service.RunTravelAll()})
+}
+
 func (s *Server) handleRefreshPoints(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Version string `json:"version"`
@@ -744,6 +749,8 @@ func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request) {
 		account, err = s.service.ActiveChat(id, true)
 	case "points":
 		account, err = s.service.Points(id)
+	case "travel":
+		account, err = s.service.Travel(id)
 	default:
 		writeError(w, http.StatusNotFound, "接口不存在")
 		return

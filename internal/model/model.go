@@ -44,6 +44,16 @@ type Account struct {
 	LastActiveDate  string    `json:"lastActiveDate,omitempty"`
 	LastActive      string    `json:"lastActive,omitempty"`
 	LastActiveMsg   string    `json:"lastActiveMessage,omitempty"`
+	// 国内版成长中心「派猫猫旅行」状态：traveling / arrived / done / error / no_buddy
+	TravelState       string    `json:"travelState,omitempty"`
+	TravelLocation    string    `json:"travelLocation,omitempty"`
+	TravelArriveAt    int64     `json:"travelArriveAt,omitempty"`
+	TravelReward      int64     `json:"travelReward,omitempty"`
+	TravelDate        string    `json:"travelDate,omitempty"`
+	TravelMsg         string    `json:"travelMessage,omitempty"`
+	TravelUpdatedAt   time.Time `json:"travelUpdatedAt,omitempty"`
+	TravelLastAttempt time.Time `json:"travelLastAttempt,omitempty"`
+	TravelLastAdopt   time.Time `json:"travelLastAdopt,omitempty"`
 	// 国际版活跃积分复核：积分非即时到账，活跃后按 Settings.RecheckDelayMinutes 延迟复查
 	PendingRecheckAt    time.Time      `json:"pendingRecheckAt,omitempty"`
 	BalanceBeforeActive int64          `json:"balanceBeforeActive,omitempty"`
@@ -172,6 +182,10 @@ type Settings struct {
 	// ActivePrompt 国际版活跃会话的用户消息内容；为空使用 client.DefaultActivePrompt。
 	// 太短的问候可能被服务端判定为非有效会话，可自定义更自然的多句提问。
 	ActivePrompt string `json:"activePrompt"`
+	// TravelEnabled 国内版自动旅行：每日自动派猫猫出行并在到达后领取奖励。
+	TravelEnabled bool `json:"travelEnabled"`
+	// TravelAutoAdopt 无 Buddy 时自动领养（会代用户同意成长中心活动协议）。
+	TravelAutoAdopt bool `json:"travelAutoAdopt"`
 }
 
 // SettingsPatch 是 PUT /api/settings 使用的请求模型。
@@ -185,6 +199,8 @@ type SettingsPatch struct {
 	RecheckDelayMinutes *int    `json:"recheckDelayMinutes"`
 	ProxyURL            *string `json:"proxyUrl"`
 	ActivePrompt        *string `json:"activePrompt"`
+	TravelEnabled       *bool   `json:"travelEnabled"`
+	TravelAutoAdopt     *bool   `json:"travelAutoAdopt"`
 }
 
 // ValidProxyScheme 代理协议白名单
@@ -243,6 +259,12 @@ type PublicAccount struct {
 	LastActiveDate   string    `json:"lastActiveDate,omitempty"`
 	LastActive       string    `json:"lastActive,omitempty"`
 	LastActiveMsg    string    `json:"lastActiveMessage,omitempty"`
+	TravelState      string    `json:"travelState,omitempty"`
+	TravelLocation   string    `json:"travelLocation,omitempty"`
+	TravelArriveAt   int64     `json:"travelArriveAt,omitempty"`
+	TravelReward     int64     `json:"travelReward,omitempty"`
+	TravelMsg        string    `json:"travelMessage,omitempty"`
+	TravelUpdatedAt  time.Time `json:"travelUpdatedAt,omitempty"`
 	PendingRecheckAt time.Time `json:"pendingRecheckAt,omitempty"`
 	RecheckAttempts  int       `json:"recheckAttempts,omitempty"`
 	LastPointsAt     time.Time `json:"lastPointsAt,omitempty"`
@@ -279,6 +301,12 @@ func (a Account) Public() PublicAccount {
 		LastActiveDate:   a.LastActiveDate,
 		LastActive:       a.LastActive,
 		LastActiveMsg:    a.LastActiveMsg,
+		TravelState:      a.TravelState,
+		TravelLocation:   a.TravelLocation,
+		TravelArriveAt:   a.TravelArriveAt,
+		TravelReward:     a.TravelReward,
+		TravelMsg:        a.TravelMsg,
+		TravelUpdatedAt:  a.TravelUpdatedAt,
 		PendingRecheckAt: a.PendingRecheckAt,
 		RecheckAttempts:  a.RecheckAttempts,
 		LastPointsAt:     a.LastPointsAt,
