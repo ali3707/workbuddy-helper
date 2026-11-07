@@ -1433,8 +1433,47 @@ select:disabled {
 
 .backup-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
   gap: 8px;
+}
+
+/* Switch 明文导出弹窗：风险提示与格式说明 */
+.callout-warn {
+  margin: 4px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--amber);
+  border-radius: var(--radius);
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.callout-warn strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.callout-warn p {
+  margin: 0;
+  color: var(--text-soft);
+}
+
+.switch-format-list {
+  margin: 0 0 14px;
+  padding-left: 16px;
+  display: grid;
+  gap: 3px;
+  list-style: disc;
+}
+
+.switch-format-list code {
+  padding: 0 3px;
+  border-radius: 4px;
+  background: var(--surface-subtle);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
 }
 
 .login-page {

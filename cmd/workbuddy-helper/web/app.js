@@ -96,6 +96,9 @@
     confirmImport: document.querySelector("#confirm-import"),
     exportAccounts: document.querySelector("#export-accounts"),
     importAccounts: document.querySelector("#import-accounts"),
+    exportSwitch: document.querySelector("#export-switch"),
+    switchDialog: document.querySelector("#switch-dialog"),
+    confirmExportSwitch: document.querySelector("#confirm-export-switch"),
     editDialog: document.querySelector("#edit-dialog"),
     editForm: document.querySelector("#edit-form"),
     editAccountId: document.querySelector("#edit-account-id"),
@@ -1254,21 +1257,43 @@
       });
       const content = String(result?.content || "");
       if (!content) throw new Error("服务未返回备份内容");
-      const blob = new Blob([content], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = String(result?.filename || "workbuddy-accounts.json");
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      downloadTextFile(content, String(result?.filename || ""), "workbuddy-accounts.json");
       toast(`已导出 ${integerFormatter.format(Number(result?.count) || 0)} 个账号`);
       elements.backupDialog.close();
     } catch (error) {
       toast(`导出失败：${getErrorMessage(error)}`, "error");
     } finally {
       setButtonBusy(elements.confirmExport, false);
+    }
+  }
+
+  // 导出接口统一返回 { content, filename }，这里负责落成本地文件。
+  function downloadTextFile(content, filename, fallbackName) {
+    const blob = new Blob([content], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename || fallbackName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  // 导出 workbuddy-switch 可直接导入的明文账号 JSON（不加密，见弹窗提示）。
+  async function exportSwitchAccounts() {
+    setButtonBusy(elements.confirmExportSwitch, true, "导出中");
+    try {
+      const result = await api("/api/accounts/export-switch", { method: "POST" });
+      const content = String(result?.content || "");
+      if (!content) throw new Error("服务未返回导出内容");
+      downloadTextFile(content, String(result?.filename || ""), "wb-switch-accounts.json");
+      toast(`已导出 ${integerFormatter.format(Number(result?.count) || 0)} 个账号（Switch 格式）`);
+      elements.switchDialog.close();
+    } catch (error) {
+      toast(`导出失败：${getErrorMessage(error)}`, "error");
+    } finally {
+      setButtonBusy(elements.confirmExportSwitch, false);
     }
   }
 
@@ -1809,6 +1834,8 @@
     elements.importAccounts.addEventListener("click", () => openBackupDialog("import"));
     elements.confirmExport.addEventListener("click", exportAccounts);
     elements.confirmImport.addEventListener("click", importAccounts);
+    elements.exportSwitch?.addEventListener("click", () => elements.switchDialog?.showModal());
+    elements.confirmExportSwitch?.addEventListener("click", exportSwitchAccounts);
     elements.retryLogin.addEventListener("click", startLogin);
     elements.loginVersionButtons.forEach((button) => {
       button.addEventListener("click", () => {

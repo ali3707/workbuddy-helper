@@ -51,6 +51,7 @@
 - **面板登录**：首次访问初始化管理员账号密码，之后需登录才能查看/操作（7 天滑动会话，HttpOnly Cookie，进程重启后需重新登录，失败 5 次限流 5 分钟）。用 `WBH_AUTH_USER`/`WBH_AUTH_PASSWORD` 可直接指定面板账号（不再使用浏览器 Basic Auth）。
 - **本地看板**：响应式 Web 界面、页面内登录（直接内嵌官方登录页）、运行日志、账号启停、显示名编辑。
 - **账号备份**：支持导出/导入账号（口令派生的 AES-256-GCM 加密 JSON，含令牌），导入按「版本 + UID」去重，可跨设备或容器迁移。
+- **导出为 Switch 格式**：一键导出 [workbuddy-switch](https://github.com/changexbc/workbuddy-switch) 可直接导入的明文账号 JSON（`access_token` / `variant` / 毫秒 `expiresAt` 等字段按 switch 账号库口径转换），在该项目「导入账号」里选择文件即可；明文文件含令牌，不要外传。
 - **自动旅行（仅国内版）**：自动派猫猫出行、到达后领取积分；可开启「无 Buddy 时自动领养」（自动切换/开盲盒领养，并代同意成长中心活动协议）。界面显示旅行状态、地点与预计积分；每行另有「领取 Buddy」按钮，缺 Buddy 时手动一键领取/切换。
 - **双加密后端**：Windows 用 DPAPI，Linux/容器用 `key.bin` + AES-256-GCM。
 - **跨平台迁移**：`--export-portable` / `--import` 支持在 Windows 与容器之间搬运账号。
@@ -65,7 +66,7 @@
 1. **页头**：版本切换下拉（国内版 / 国际版，切换对应账号列表）、连接状态、运行日志、登录。
 2. **总览卡片**：当前版本账号数、今日完成数（签到/活跃）、总积分、启用数。
 3. **账号列表**：显示名、状态、今日签到/活跃、积分余额与套餐明细，以及「签到或活跃 / 查积分 / 启停 / 重命名 / 删除」操作按钮。
-4. **侧边栏**：定时任务时间、自动旅行开关（国内版）、账户备份（导出 / 导入）、运行日志；顶部「一键刷新积分」「全部签到/全部活跃」，国内版另有「全部旅行」。
+4. **侧边栏**：定时任务时间、自动旅行开关（国内版）、账户备份（导出 / 导入 / 导出为 Switch 格式）、运行日志；顶部「一键刷新积分」「全部签到/全部活跃」，国内版另有「全部旅行」。
 
 ---
 
@@ -363,6 +364,7 @@ workbuddy-helper/
 | POST | `/api/run-all` | 执行当前版本全部账号任务（国内版签到 / 国际版活跃） |
 | POST | `/api/refresh-points` | 刷新当前版本全部账号积分 |
 | POST | `/api/accounts/export` | 导出账号备份（口令加密，返回文件名与内容） |
+| POST | `/api/accounts/export-switch` | 导出 workbuddy-switch 兼容的明文账号 JSON（无口令，含令牌） |
 | POST | `/api/accounts/import` | 导入账号备份（按版本 + UID 去重） |
 | POST | `/api/accounts/{id}/travel` | 手动派猫猫旅行（国内版；到达则领奖） |
 | POST | `/api/accounts/{id}/adopt-buddy` | 手动领取/启用 Buddy（国内版；不受自动领养开关限制） |
@@ -407,6 +409,11 @@ A：签到与积分使用 WorkBuddy 客户端当前调用的 billing 接口；�
 ---
 
 ## 更新日志
+
+### v1.1.2（2026-11-07）
+
+- **新增「导出为 Switch 格式」**：设置侧边栏账户备份区多一个按钮，导出 [workbuddy-switch](https://github.com/changexbc/workbuddy-switch) 的「导入账号」可直接读取的 JSON 数组。字段按该项目 `~/.wb-switch/accounts.json` 口径转换：`accessToken` → `access_token`、`refreshToken` → `refresh_token`、版本 `cn/intl` → 档位 `variant: cn/ai`、`expiresAt` 由秒换算为毫秒（switch 用毫秒判断凭据是否过期）、备注 `alias` 写入 `note` 并置 `displayField: note`；domain 缺失时按版本补默认域。积分/签到/旅行等运行态数据不迁移，switch 会重新拉取。
+- 该文件**不加密**（switch 的导入没有密码输入），弹窗内明确提示风险后再导出；缺少 UID 或 access_token 的记录会被跳过。新增 `internal/service/switch_export.go` 与对应单测。
 
 ### v1.1.1（2026-11-04）
 

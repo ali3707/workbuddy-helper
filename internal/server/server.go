@@ -91,6 +91,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/refresh-points", s.handleRefreshPoints)
 	mux.HandleFunc("POST /api/travel/run-all", s.handleTravelRunAll)
 	mux.HandleFunc("POST /api/accounts/export", s.handleAccountsExport)
+	mux.HandleFunc("POST /api/accounts/export-switch", s.handleAccountsExportSwitch)
 	mux.HandleFunc("POST /api/accounts/import", s.handleAccountsImport)
 	mux.HandleFunc("GET /api/auth/state", s.handleAuthState)
 	mux.HandleFunc("POST /api/auth/setup", s.handleAuthSetup)
@@ -631,6 +632,27 @@ func (s *Server) handleAccountsExport(w http.ResponseWriter, r *http.Request) {
 		} else {
 			log.Printf("export accounts failed: %v", err)
 			writeError(w, http.StatusInternalServerError, "导出失败，请检查 data 目录后重试")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"filename": filename,
+		"content":  content,
+		"count":    count,
+	})
+}
+
+// handleAccountsExportSwitch 导出 workbuddy-switch 能直接导入的明文账号 JSON。
+// 该格式不含密码保护：switch 的导入流程没有密码输入，只能消费 JSON 数组，
+// 所以这里刻意与加密备份（/api/accounts/export）分开，避免误以为文件已被加密。
+func (s *Server) handleAccountsExportSwitch(w http.ResponseWriter, r *http.Request) {
+	content, filename, count, err := s.service.ExportSwitchAccounts()
+	if err != nil {
+		if service.IsUserError(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+		} else {
+			log.Printf("export switch accounts failed: %v", err)
+			writeError(w, http.StatusInternalServerError, "导出失败，请稍后重试")
 		}
 		return
 	}

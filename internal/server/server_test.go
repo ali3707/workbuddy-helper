@@ -742,6 +742,29 @@ func TestAccountBackupEndpoints(t *testing.T) {
 		t.Fatalf("unexpected export payload: count=%d len=%d", exported.Count, len(exported.Content))
 	}
 
+	// Switch 兼容导出：明文 JSON 数组 + snake_case 凭据，供 workbuddy-switch 直接导入
+	switchReq := httptest.NewRequest(http.MethodPost, "/api/accounts/export-switch", nil)
+	switchReq.Header.Set("X-App-Token", svc.AppToken())
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, switchReq)
+	if w.Code != http.StatusOK {
+		t.Fatalf("switch export status=%d body=%s", w.Code, w.Body.String())
+	}
+	var switchExport struct {
+		Content  string `json:"content"`
+		Filename string `json:"filename"`
+		Count    int    `json:"count"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &switchExport); err != nil {
+		t.Fatal(err)
+	}
+	if switchExport.Count != 1 || !strings.HasPrefix(switchExport.Filename, "wb-switch-accounts-") {
+		t.Fatalf("unexpected switch export: count=%d filename=%q", switchExport.Count, switchExport.Filename)
+	}
+	if !strings.Contains(switchExport.Content, `"access_token": "access-secret"`) {
+		t.Fatalf("switch 导出应为明文 snake_case 凭据：%s", switchExport.Content)
+	}
+
 	// 缺少本地会话令牌时拒绝导入（CSRF 保护）
 	noToken := httptest.NewRequest(http.MethodPost, "/api/accounts/import", strings.NewReader(`{"password":"secret123","content":"x"}`))
 	w = httptest.NewRecorder()

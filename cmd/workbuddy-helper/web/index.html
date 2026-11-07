@@ -264,8 +264,12 @@
                     <i data-lucide="upload" aria-hidden="true"></i>
                     <span>导入账号</span>
                   </button>
+                  <button class="button button-secondary" id="export-switch" type="button">
+                    <i data-lucide="share-2" aria-hidden="true"></i>
+                    <span>导出为 Switch 格式</span>
+                  </button>
                 </div>
-                <p class="field-hint">导出文件用密码加密（含令牌），可迁移到其他设备；导入按 UID 去重，不覆盖已有账号</p>
+                <p class="field-hint">「导出账号」用密码加密（含令牌），可跨设备迁移，导入按 UID 去重；「导出为 Switch 格式」供 workbuddy-switch 直接导入，是明文 JSON</p>
               </div>
 
               <button class="button button-secondary button-full" id="save-schedule" type="submit">
@@ -423,6 +427,39 @@
             <span>导入账号</span>
           </button>
         </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal modal-small" id="switch-dialog" aria-labelledby="switch-title">
+      <form method="dialog" class="modal-card">
+        <div class="modal-header">
+          <div class="modal-icon"><i data-lucide="share-2" aria-hidden="true"></i></div>
+          <div>
+            <h2 id="switch-title">导出为 WorkBuddy Switch 格式</h2>
+            <p>供 workbuddy-switch 的「导入账号」直接读取</p>
+          </div>
+          <button class="icon-button modal-close" value="cancel" type="submit" aria-label="关闭窗口" data-tooltip="关闭">
+            <i data-lucide="x" aria-hidden="true"></i>
+          </button>
+        </div>
+
+        <div class="callout-warn">
+          <strong>文件是明文 JSON，含 access_token / refresh_token</strong>
+          <p>Switch 的导入不带密码输入，只能读明文，所以这份文件没有加密。不要上传网盘、发群或提交到仓库；导入完成后建议删除。</p>
+        </div>
+
+        <ul class="field-hint switch-format-list">
+          <li>字段按 Switch 账号库口径转换：<code>accessToken</code> → <code>access_token</code></li>
+          <li>版本 <code>cn / intl</code> → 档位 <code>variant: cn / ai</code></li>
+          <li>过期时间从秒换算为毫秒（Switch 按毫秒判断凭据是否过期）</li>
+          <li>账户名称（alias）写入备注 <code>note</code>，切换后展示名保持一致</li>
+          <li>积分、签到、旅行等运行态数据不导出，Switch 会重新拉取</li>
+        </ul>
+
+        <button class="button button-primary button-full" id="confirm-export-switch" type="button">
+          <i data-lucide="download" aria-hidden="true"></i>
+          <span>我了解风险，导出明文文件</span>
+        </button>
       </form>
     </dialog>
 
