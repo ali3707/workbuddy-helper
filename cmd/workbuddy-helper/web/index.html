@@ -417,10 +417,13 @@
         </div>
 
         <div id="backup-import-stage" hidden>
-          <label class="field-label" for="backup-file">选择备份文件</label>
+          <label class="field-label" for="backup-file">选择账号文件</label>
           <input class="text-input" id="backup-file" type="file" accept=".json,application/json" />
-          <label class="field-label" for="backup-import-password">备份密码</label>
-          <input class="text-input" id="backup-import-password" type="password" autocomplete="current-password" placeholder="导出时设置的密码" />
+          <p class="field-hint" id="import-format-hint">支持本程序的加密备份，以及 workbuddy-switch 导出的账号 JSON（明文数组，无需密码）。</p>
+          <div id="backup-password-row">
+            <label class="field-label" for="backup-import-password">备份密码</label>
+            <input class="text-input" id="backup-import-password" type="password" autocomplete="current-password" placeholder="导出时设置的密码" />
+          </div>
           <p class="field-hint">按「版本 + UID」去重，已存在的账号会跳过，不会覆盖本地令牌。</p>
           <button class="button button-primary button-full" id="confirm-import" type="button">
             <i data-lucide="upload" aria-hidden="true"></i>

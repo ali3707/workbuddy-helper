@@ -92,6 +92,8 @@
     backupPassword: document.querySelector("#backup-password"),
     backupImportPassword: document.querySelector("#backup-import-password"),
     backupFile: document.querySelector("#backup-file"),
+    backupPasswordRow: document.querySelector("#backup-password-row"),
+    importFormatHint: document.querySelector("#import-format-hint"),
     confirmExport: document.querySelector("#confirm-export"),
     confirmImport: document.querySelector("#confirm-import"),
     exportAccounts: document.querySelector("#export-accounts"),
@@ -1227,19 +1229,56 @@
     }
   }
 
+  // 导入支持两种文件：本程序的加密备份（需密码）与 workbuddy-switch 导出的
+  // 明文账号数组（顶层是 JSON 数组，不需要密码）。
+  const IMPORT_HINT_DEFAULT =
+    "支持本程序的加密备份，以及 workbuddy-switch 导出的账号 JSON（明文数组，无需密码）。";
+
+  function isSwitchImport(content) {
+    return String(content || "")
+      .replace(/^\uFEFF/, "")
+      .trimStart()
+      .startsWith("[");
+  }
+
   function openBackupDialog(mode) {
     if (!elements.backupDialog) return;
     const importing = mode === "import";
     elements.backupTitle.textContent = importing ? "导入账号" : "导出账号";
     elements.backupSubtitle.textContent = importing
-      ? "选择备份文件并输入导出时设置的密码"
+      ? "选择账号文件：加密备份需输入密码，switch 明文文件直接导入"
       : "导出为密码加密的 JSON 文件（含登录令牌）";
     elements.backupExportStage.hidden = importing;
     elements.backupImportStage.hidden = !importing;
     elements.backupPassword.value = "";
     elements.backupImportPassword.value = "";
     elements.backupFile.value = "";
+    if (elements.backupPasswordRow) elements.backupPasswordRow.hidden = false;
+    if (elements.importFormatHint) elements.importFormatHint.textContent = IMPORT_HINT_DEFAULT;
     elements.backupDialog.showModal();
+  }
+
+  // 选中文件后按首个非空白字符判断来源，即时隐藏/显示密码输入。
+  async function updateImportFormatHint() {
+    if (!elements.backupFile) return;
+    const file = elements.backupFile.files?.[0];
+    if (!file) {
+      if (elements.backupPasswordRow) elements.backupPasswordRow.hidden = false;
+      if (elements.importFormatHint) elements.importFormatHint.textContent = IMPORT_HINT_DEFAULT;
+      return;
+    }
+    let switchFormat = false;
+    try {
+      switchFormat = isSwitchImport(await file.slice(0, 256).text());
+    } catch (error) {
+      switchFormat = false;
+    }
+    if (elements.backupPasswordRow) elements.backupPasswordRow.hidden = switchFormat;
+    if (elements.importFormatHint) {
+      elements.importFormatHint.textContent = switchFormat
+        ? "已识别为 Switch 明文格式，无需密码；加密凭据（$wbEncrypted）无法导入，会提示重新登录。"
+        : "已识别为加密备份，请输入导出时设置的密码。";
+    }
   }
 
   async function exportAccounts() {
@@ -1301,20 +1340,21 @@
     const file = elements.backupFile.files?.[0];
     const password = elements.backupImportPassword.value;
     if (!file) {
-      toast("请选择备份文件", "error");
-      return;
-    }
-    if (password.length < 6) {
-      toast("请输入导出时设置的密码", "error");
-      elements.backupImportPassword.focus();
+      toast("请选择账号文件", "error");
       return;
     }
     setButtonBusy(elements.confirmImport, true, "导入中");
     try {
       const content = await file.text();
+      const switchFormat = isSwitchImport(content);
+      if (!switchFormat && password.length < 6) {
+        toast("请输入导出时设置的密码", "error");
+        elements.backupImportPassword.focus();
+        return;
+      }
       const result = await api("/api/accounts/import", {
         method: "POST",
-        body: JSON.stringify({ password, content }),
+        body: JSON.stringify({ password: switchFormat ? "" : password, content }),
       });
       toast(result?.message || "导入完成");
       elements.backupDialog.close();
@@ -1834,6 +1874,7 @@
     elements.importAccounts.addEventListener("click", () => openBackupDialog("import"));
     elements.confirmExport.addEventListener("click", exportAccounts);
     elements.confirmImport.addEventListener("click", importAccounts);
+    elements.backupFile?.addEventListener("change", updateImportFormatHint);
     elements.exportSwitch?.addEventListener("click", () => elements.switchDialog?.showModal());
     elements.confirmExportSwitch?.addEventListener("click", exportSwitchAccounts);
     elements.retryLogin.addEventListener("click", startLogin);

@@ -814,6 +814,38 @@ func TestAccountBackupEndpoints(t *testing.T) {
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "密码错误") {
 		t.Fatalf("wrong password status=%d body=%s", w.Code, w.Body.String())
 	}
+
+	// workbuddy-switch 的明文数组：不需要密码，直接导入
+	switchStore := store.New(t.TempDir())
+	if err := switchStore.Save(model.NewState()); err != nil {
+		t.Fatal(err)
+	}
+	switchSvc, err := service.New(switchStore, client.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	switchHandler := authenticatedHandler(t, switchSvc, web, "")
+	switchBody, _ := json.Marshal(map[string]string{
+		"password": "",
+		"content":  `[{"uid":"u-switch","variant":"ai","access_token":"tok-switch","note":"来自 Switch"}]`,
+	})
+	switchImportReq := httptest.NewRequest(http.MethodPost, "/api/accounts/import", strings.NewReader(string(switchBody)))
+	switchImportReq.Header.Set("X-App-Token", switchSvc.AppToken())
+	w = httptest.NewRecorder()
+	switchHandler.ServeHTTP(w, switchImportReq)
+	if w.Code != http.StatusOK {
+		t.Fatalf("switch import status=%d body=%s", w.Code, w.Body.String())
+	}
+	var switchResult struct {
+		Imported int    `json:"imported"`
+		Message  string `json:"message"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &switchResult); err != nil {
+		t.Fatal(err)
+	}
+	if switchResult.Imported != 1 || !strings.Contains(switchResult.Message, "新增 1 个账号") {
+		t.Fatalf("unexpected switch import result: %+v", switchResult)
+	}
 }
 
 func TestPanelAuthRequiresSetupAndLogin(t *testing.T) {

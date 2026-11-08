@@ -1300,6 +1300,16 @@ select:disabled {
   margin-bottom: -12px;
 }
 
+/* 导入弹窗的密码行：switch 明文文件不需要密码，整行隐藏 */
+#backup-password-row {
+  display: grid;
+  gap: 20px;
+}
+
+#backup-password-row[hidden] {
+  display: none;
+}
+
 .text-input {
   width: 100%;
   padding: 8px 11px;

@@ -122,11 +122,19 @@ func (s *Service) ExportAccounts(password string) (content, filename string, cou
 	return string(raw), fmt.Sprintf("workbuddy-accounts-%s.json", now.Format("20060102-1504")), len(accounts), nil
 }
 
-// ImportAccounts 解密备份并合并账号，返回新增与跳过的数量。
-// 已存在的 (版本, UID) 一律跳过，不覆盖本地令牌与别名。
+// ImportAccounts 导入账号文件，返回新增与跳过的数量。
+//
+// 支持两种来源：本程序的密码加密备份（AES-256-GCM 信封），以及
+// workbuddy-switch 导出的明文 JSON 数组（顶层为数组，不需要密码，见
+// importSwitchAccounts）。已存在的 (版本, UID) 一律跳过，不覆盖本地令牌与别名。
 func (s *Service) ImportAccounts(password, content string) (imported, skipped int, err error) {
-	if strings.TrimSpace(content) == "" {
+	trimmed := strings.TrimSpace(strings.TrimPrefix(content, "\ufeff"))
+	if trimmed == "" {
 		return 0, 0, userErr("备份文件内容为空")
+	}
+	// 顶层是 JSON 数组 → switch 导出的账号文件（明文），无需密码。
+	if strings.HasPrefix(trimmed, "[") {
+		return s.importSwitchAccounts(trimmed)
 	}
 	if utf8.RuneCountInString(password) < backupMinPass {
 		return 0, 0, userErr("请输入导出时设置的密码")
@@ -168,14 +176,7 @@ func (s *Service) ImportAccounts(password, content string) (imported, skipped in
 			continue
 		}
 		seen[key] = true
-		duplicate := false
-		for i := range s.state.Accounts {
-			if s.state.Accounts[i].UID == uid && s.state.Accounts[i].VersionMode() == version {
-				duplicate = true
-				break
-			}
-		}
-		if duplicate {
+		if s.hasAccountLocked(uid, version) {
 			skipped++
 			continue
 		}
@@ -204,6 +205,22 @@ func (s *Service) ImportAccounts(password, content string) (imported, skipped in
 			UpdatedAt:    now,
 		})
 	}
+	return s.saveImportedLocked(pending, skipped)
+}
+
+// hasAccountLocked 判断同一 (版本, UID) 是否已存在；调用方需持有 s.mu。
+func (s *Service) hasAccountLocked(uid, version string) bool {
+	for i := range s.state.Accounts {
+		if s.state.Accounts[i].UID == uid && s.state.Accounts[i].VersionMode() == version {
+			return true
+		}
+	}
+	return false
+}
+
+// saveImportedLocked 把待导入账号并入账号库并持久化，返回新增与跳过数量。
+// 调用方必须持有 loginCommitMu 与 s.mu（与登录提交共用一把锁，避免重复插入）。
+func (s *Service) saveImportedLocked(pending []model.Account, skipped int) (int, int, error) {
 	if len(pending) == 0 {
 		return 0, skipped, nil
 	}

@@ -52,6 +52,7 @@
 - **本地看板**：响应式 Web 界面、页面内登录（直接内嵌官方登录页）、运行日志、账号启停、显示名编辑。
 - **账号备份**：支持导出/导入账号（口令派生的 AES-256-GCM 加密 JSON，含令牌），导入按「版本 + UID」去重，可跨设备或容器迁移。
 - **导出为 Switch 格式**：一键导出 [workbuddy-switch](https://github.com/changexbc/workbuddy-switch) 可直接导入的明文账号 JSON（`access_token` / `variant` / 毫秒 `expiresAt` 等字段按 switch 账号库口径转换），在该项目「导入账号」里选择文件即可；明文文件含令牌，不要外传。
+- **导入 Switch 格式**：反向也支持——把 switch 导出的账号 JSON（或 `~/.wb-switch/accounts.json`）直接交给「导入账号」，程序按顶层是否为 JSON 数组自动识别，明文数组无需密码；`access_token` / `refresh_token` / `variant` / `note` / 毫秒 `expiresAt` 会转换回本程序字段，按「版本 + UID」去重。`{$wbEncrypted}` 加密凭据无法解密，这类记录会提示重新登录。
 - **自动旅行（仅国内版）**：自动派猫猫出行、到达后领取积分；可开启「无 Buddy 时自动领养」（自动切换/开盲盒领养，并代同意成长中心活动协议）。界面显示旅行状态、地点与预计积分；每行另有「领取 Buddy」按钮，缺 Buddy 时手动一键领取/切换。
 - **双加密后端**：Windows 用 DPAPI，Linux/容器用 `key.bin` + AES-256-GCM。
 - **跨平台迁移**：`--export-portable` / `--import` 支持在 Windows 与容器之间搬运账号。
@@ -66,7 +67,7 @@
 1. **页头**：版本切换下拉（国内版 / 国际版，切换对应账号列表）、连接状态、运行日志、登录。
 2. **总览卡片**：当前版本账号数、今日完成数（签到/活跃）、总积分、启用数。
 3. **账号列表**：显示名、状态、今日签到/活跃、积分余额与套餐明细，以及「签到或活跃 / 查积分 / 启停 / 重命名 / 删除」操作按钮。
-4. **侧边栏**：定时任务时间、自动旅行开关（国内版）、账户备份（导出 / 导入 / 导出为 Switch 格式）、运行日志；顶部「一键刷新积分」「全部签到/全部活跃」，国内版另有「全部旅行」。
+4. **侧边栏**：定时任务时间、自动旅行开关（国内版）、账户备份（导出 / 导入 / 导出为 Switch 格式；导入支持加密备份与 switch 明文 JSON）、运行日志；顶部「一键刷新积分」「全部签到/全部活跃」，国内版另有「全部旅行」。
 
 ---
 
@@ -365,7 +366,7 @@ workbuddy-helper/
 | POST | `/api/refresh-points` | 刷新当前版本全部账号积分 |
 | POST | `/api/accounts/export` | 导出账号备份（口令加密，返回文件名与内容） |
 | POST | `/api/accounts/export-switch` | 导出 workbuddy-switch 兼容的明文账号 JSON（无口令，含令牌） |
-| POST | `/api/accounts/import` | 导入账号备份（按版本 + UID 去重） |
+| POST | `/api/accounts/import` | 导入账号（支持口令加密备份与 workbuddy-switch 明文数组，按版本 + UID 去重） |
 | POST | `/api/accounts/{id}/travel` | 手动派猫猫旅行（国内版；到达则领奖） |
 | POST | `/api/accounts/{id}/adopt-buddy` | 手动领取/启用 Buddy（国内版；不受自动领养开关限制） |
 | POST | `/api/travel/run-all` | 对全部启用国内版账号执行一轮旅行 |
@@ -409,6 +410,12 @@ A：签到与积分使用 WorkBuddy 客户端当前调用的 billing 接口；�
 ---
 
 ## 更新日志
+
+### v1.1.3（2026-11-08）
+
+- **支持导入 workbuddy-switch 的格式**：「导入账号」现在会自动识别文件来源——顶层是 JSON 对象时按本程序的加密备份处理（需要密码），顶层是 JSON 数组时按 switch 的明文账号文件处理（不需要密码，前端选中文件后自动隐藏密码输入）。字段反向映射：`access_token` → 本地令牌、`refresh_token` → 刷新令牌、`variant: cn/ai` → 版本国内版/国际版（缺失按 `domain` 后缀判断）、`note` → 账号备注（alias）、`expiresAt` 毫秒换算为秒、`enterpriseId` / `nickname` / `domain` 原样保留，`domain` 为空时按版本补默认域。
+- 导入仍按「版本 + UID」去重、不覆盖本地令牌，沿用 50 个账号上限与每日任务版本隔离。switch 里 `{$wbEncrypted}` 形态的加密凭据由 WorkBuddy 本机密钥加密，本程序无法解密，这类记录会被跳过；全部都是加密凭据时直接提示「用官方登录页重新登录」。
+- 新增 `internal/service/switch_import.go` 与对应单测；把「并入账号库 + 落盘 + 日志」抽成 `saveImportedLocked`，加密备份与 switch 明文导入共用同一套去重与上限逻辑。
 
 ### v1.1.2（2026-11-07）
 
