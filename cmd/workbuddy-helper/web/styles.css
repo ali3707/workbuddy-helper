@@ -1084,7 +1084,7 @@ select:disabled {
 
 .log-entry {
   display: grid;
-  grid-template-columns: 72px 56px minmax(0, 1fr);
+  grid-template-columns: auto 56px minmax(0, 1fr);
   gap: 10px;
   padding: 10px 18px;
   border-bottom: 1px solid #edf1f0;
@@ -1952,7 +1952,7 @@ body.auth-locked .header-actions #connection-status {
   }
 
   .log-entry {
-    grid-template-columns: 68px minmax(0, 1fr);
+    grid-template-columns: auto minmax(0, 1fr);
   }
 
   .log-level {

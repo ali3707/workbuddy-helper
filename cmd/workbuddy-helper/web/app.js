@@ -175,6 +175,42 @@
     hour12: false,
     timeZone: "Asia/Shanghai",
   });
+  const logTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Shanghai",
+  });
+  const logTitleFormatter = new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Shanghai",
+  });
+
+  const logYearFormatter = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    timeZone: "Asia/Shanghai",
+  });
+
+  function formatterParts(formatter, date) {
+    const parts = {};
+    for (const part of formatter.formatToParts(date)) {
+      if (part.type !== "literal") parts[part.type] = part.value;
+    }
+    return parts;
+  }
+
+  // 当年日志只显示月-日，跨年日志自动补上年份，避免同日不同年混淆。
+  const currentYearTag = formatterParts(logYearFormatter, new Date()).year;
 
   function refreshIcons(root = document) {
     if (window.lucide && typeof window.lucide.createIcons === "function") {
@@ -1665,11 +1701,30 @@
   }
 
   function formatLogTime(value) {
-    if (!value) return "--:--:--";
+    if (!value) return "--";
     const date = new Date(value);
-    if (!Number.isNaN(date.getTime())) return timeFormatter.format(date);
-    const timeMatch = String(value).match(/\b(\d{2}:\d{2}(?::\d{2})?)\b/);
-    return timeMatch ? timeMatch[1] : String(value).slice(0, 8);
+    if (!Number.isNaN(date.getTime())) {
+      const parts = formatterParts(logTimeFormatter, date);
+      const yearPrefix = parts.year && parts.year !== currentYearTag ? `${parts.year}-` : "";
+      return `${yearPrefix}${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+    }
+    const text = String(value).trim();
+    const prefixed = text.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})[T\s]+(\d{1,2}:\d{2}(?::\d{2})?)/);
+    if (prefixed) {
+      const pad = (n) => String(n).padStart(2, "0");
+      const yearPrefix = prefixed[1] !== currentYearTag ? `${prefixed[1]}-` : "";
+      return `${yearPrefix}${pad(prefixed[2])}-${pad(prefixed[3])} ${prefixed[4]}`;
+    }
+    const timeOnly = text.match(/\b(\d{1,2}:\d{2}(?::\d{2})?)\b/);
+    return timeOnly ? timeOnly[1] : text.slice(0, 16);
+  }
+
+  function formatLogTitle(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    const parts = formatterParts(logTitleFormatter, date);
+    return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
   }
 
   function renderLogs(logs) {
@@ -1697,9 +1752,10 @@
             : level.includes("success") || level.includes("ok")
               ? "is-success"
               : "";
+        const title = formatLogTitle(log.time);
         return `
           <div class="log-entry">
-            <time class="log-time">${escapeHTML(formatLogTime(log.time))}</time>
+            <time class="log-time"${title ? ` title="${escapeHTML(title)}"` : ""}>${escapeHTML(formatLogTime(log.time))}</time>
             <span class="log-level ${levelClass}">${escapeHTML(log.level)}</span>
             <span class="log-message">${escapeHTML(log.message)}</span>
           </div>`;
