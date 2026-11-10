@@ -785,6 +785,35 @@ select:disabled {
   white-space: nowrap;
 }
 
+/* 积分单元格本身是「查看全部积分包」小窗的触发器：保持原有排版，仅补悬停反馈。 */
+.points-cell {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: 100%;
+  padding: 3px 6px;
+  margin: -3px -6px;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  transition: background-color 120ms ease;
+}
+
+.points-cell:hover {
+  background: var(--surface-hover);
+}
+
+.points-cell:hover .points-value {
+  color: var(--primary);
+}
+
+.account-table tbody tr.is-disabled .points-cell:hover .points-value {
+  color: var(--text);
+}
+
 .switch {
   position: relative;
   display: inline-flex;
@@ -1171,6 +1200,168 @@ select:disabled {
   width: 32px;
   height: 32px;
   background: transparent;
+}
+
+/* —— 全部积分包小窗（对齐 workbuddy-switch 的同名弹窗：标题 + 到期时间 + 剩余/总量 + 进度条） —— */
+.package-card {
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 14px;
+  max-height: min(640px, calc(100vh - 48px));
+  overflow: hidden;
+}
+
+.package-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.package-heading h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.package-heading p {
+  margin: 4px 0 0;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.package-list {
+  min-height: 0;
+  padding-right: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.package-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.package-list::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border: 2px solid var(--surface);
+  border-radius: 999px;
+}
+
+/* 列表本身可获得焦点（键盘上下滚动），补一个与按钮一致的焦点环。 */
+.package-list:focus-visible {
+  outline: 3px solid rgba(22, 106, 91, 0.2);
+  outline-offset: 4px;
+  border-radius: 6px;
+}
+
+.package-item {
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+
+.package-item:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.package-item:last-child {
+  padding-bottom: 0;
+}
+
+.package-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.package-info {
+  min-width: 0;
+}
+
+.package-name {
+  display: block;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.package-expiry {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.package-expiry.is-soon {
+  color: var(--amber);
+}
+
+.package-expiry.is-expired {
+  color: var(--red);
+}
+
+.package-amount {
+  flex: 0 0 auto;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.package-remain {
+  display: block;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.package-used {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.package-bar {
+  height: 5px;
+  margin-top: 8px;
+  overflow: hidden;
+  background: #e9efed;
+  border-radius: 999px;
+}
+
+.package-bar-fill {
+  display: block;
+  height: 100%;
+  background: #62c6a6;
+  border-radius: inherit;
+}
+
+.package-bar-fill.is-soon {
+  background: rgba(154, 99, 21, 0.55);
+}
+
+.package-bar-fill.is-expired {
+  background: rgba(179, 67, 67, 0.5);
+}
+
+.package-empty {
+  margin: 0;
+  padding: 30px 8px;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
 }
 
 .login-stage {

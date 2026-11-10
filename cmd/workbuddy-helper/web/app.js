@@ -108,6 +108,10 @@
     closeEdit: document.querySelector("#close-edit"),
     cancelEdit: document.querySelector("#cancel-edit"),
     saveNickname: document.querySelector("#save-nickname"),
+    packagesDialog: document.querySelector("#packages-dialog"),
+    packagesSubtitle: document.querySelector("#packages-subtitle"),
+    packageList: document.querySelector("#package-list"),
+    closePackages: document.querySelector("#close-packages"),
     toastRegion: document.querySelector("#toast-region"),
   };
 
@@ -140,6 +144,7 @@
     loginPollTimer: null,
     loginPollGeneration: 0,
     editingAccountId: "",
+    packagesAccountId: "",
     proxyDirty: false,
     proxyRevision: 0,
     settingsDirty: false,
@@ -167,6 +172,16 @@
     timeZone: "Asia/Shanghai",
   });
   const tokenExpiryFormatter = new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Shanghai",
+  });
+  // 积分包到期时间：服务端给的是北京时间，展示精确到分（对齐 workbuddy-switch 的积分包窗口）
+  const packageExpiryFormatter = new Intl.DateTimeFormat("zh-CN", {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -790,6 +805,10 @@
         const reasonTooltip = account.reason ? ` data-tooltip="${escapeHTML(account.reason)}"` : "";
         const recheckMeta = formatRecheckMeta(account);
         const pointsMeta = recheckMeta || formatUpdatedAt(account.updatedAt);
+        const packageCount = accountPackages(account).length;
+        const packagesTooltip = packageCount
+          ? `查看全部 ${integerFormatter.format(packageCount)} 个积分包`
+          : "查看积分包明细";
         const dailyActionIcon = intl ? "send-horizontal" : "calendar-check-2";
         const dailyActionLabel = intl ? "活跃" : "签到";
         const travel = travelInfo(account);
@@ -819,8 +838,10 @@
               ${travelHtml}
             </td>
             <td data-label="积分">
-              <strong class="points-value">${escapeHTML(formatPoints(account.points))}</strong>
-              <span class="points-meta">${escapeHTML(pointsMeta)}</span>
+              <button class="points-cell" type="button" data-action="packages" data-tooltip="${escapeHTML(packagesTooltip)}" aria-label="查看${escapeHTML(name)}的积分包明细">
+                <strong class="points-value">${escapeHTML(formatPoints(account.points))}</strong>
+                <span class="points-meta">${escapeHTML(pointsMeta)}</span>
+              </button>
             </td>
             <td data-label="启用">
               <label class="switch" data-tooltip="${account.enabled ? "停用账户" : "启用账户"}">
@@ -932,6 +953,7 @@
     renderSummary();
     renderAccounts();
     renderSchedule();
+    refreshPackagesDialog();
   }
 
   function refreshTokenExpiry() {
@@ -1147,6 +1169,107 @@
       toast(`积分刷新失败：${getErrorMessage(error)}`, "error");
     } finally {
       setButtonBusy(elements.refreshPointsAll, false);
+    }
+  }
+
+  // —— 积分包小窗 ——
+  // 服务端 PointPackage.ExpiresAt 是「2026-11-25 19:12:00」这种北京时间字符串，
+  // 无时区后缀时按 +08:00 解析，避免浏览器本地时区影响到期判断。
+  function parsePackageExpiry(value) {
+    const text = String(value || "").trim();
+    if (!text) return null;
+    let normalized = text.includes("T") ? text : text.replace(" ", "T");
+    if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) normalized += "T00:00:00";
+    const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized);
+    const parsed = Date.parse(hasZone ? normalized : `${normalized}+08:00`);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  // 只列出还有剩余的积分包（与 switch 的「全部积分包」口径一致），按到期时间升序，长期有效排最后。
+  function accountPackages(account) {
+    const list = Array.isArray(account?.packages) ? account.packages : [];
+    return list
+      .map((raw, index) => ({
+        name: String(raw?.name || "").trim() || "未命名积分包",
+        remain: Math.max(0, Number(raw?.remain) || 0),
+        used: Math.max(0, Number(raw?.used) || 0),
+        total: Math.max(0, Number(raw?.total) || 0),
+        expiresAt: parsePackageExpiry(raw?.expiresAt),
+        index,
+      }))
+      .filter((pkg) => pkg.remain > 0)
+      .sort((left, right) => {
+        const leftExpiry = left.expiresAt ?? Number.POSITIVE_INFINITY;
+        const rightExpiry = right.expiresAt ?? Number.POSITIVE_INFINITY;
+        return leftExpiry === rightExpiry ? left.index - right.index : leftExpiry - rightExpiry;
+      });
+  }
+
+  function openPackagesDialog(account) {
+    if (!elements.packagesDialog) return;
+    app.packagesAccountId = account.id;
+    const packages = accountPackages(account);
+    const name = accountDisplayName(account);
+    if (elements.packagesSubtitle) {
+      elements.packagesSubtitle.textContent = `${name} · 共 ${integerFormatter.format(packages.length)} 个积分包`;
+    }
+
+    if (!packages.length) {
+      const hint = Number.isFinite(account.points)
+        ? "当前没有可展示的积分包。"
+        : "尚未查询到积分明细，先点账户行的「查询积分」再试。";
+      elements.packageList.innerHTML = `<p class="package-empty">${escapeHTML(hint)}</p>`;
+    } else {
+      const now = Date.now();
+      const expiringSoonMs = 7 * 24 * 60 * 60 * 1000;
+      elements.packageList.innerHTML = packages
+        .map((pkg) => {
+          const ratio = pkg.total > 0 ? Math.min(100, Math.max(0, (pkg.remain / pkg.total) * 100)) : 0;
+          const expired = pkg.expiresAt !== null && pkg.expiresAt <= now;
+          const expiringSoon = !expired && pkg.expiresAt !== null && pkg.expiresAt - now <= expiringSoonMs;
+          const expiryText = expired
+            ? "已到期"
+            : pkg.expiresAt === null
+              ? "长期有效"
+              : `到期 ${packageExpiryFormatter.format(new Date(pkg.expiresAt))}`;
+          const tone = expired ? " is-expired" : expiringSoon ? " is-soon" : "";
+          return `
+            <div class="package-item" role="listitem">
+              <div class="package-row">
+                <div class="package-info">
+                  <span class="package-name" title="${escapeHTML(pkg.name)}">${escapeHTML(pkg.name)}</span>
+                  <span class="package-expiry${tone}">${escapeHTML(expiryText)}</span>
+                </div>
+                <div class="package-amount">
+                  <span class="package-remain">${escapeHTML(numberFormatter.format(pkg.remain))} / ${escapeHTML(numberFormatter.format(pkg.total))}</span>
+                  <span class="package-used">已用 ${escapeHTML(numberFormatter.format(pkg.used))}</span>
+                </div>
+              </div>
+              <div class="package-bar" aria-hidden="true">
+                <span class="package-bar-fill${tone}" style="width: ${ratio.toFixed(2)}%"></span>
+              </div>
+            </div>
+          `;
+        })
+        .join("");
+    }
+
+    if (!elements.packagesDialog.open) elements.packagesDialog.showModal();
+  }
+
+  function closePackagesDialog() {
+    app.packagesAccountId = "";
+    if (elements.packagesDialog?.open) elements.packagesDialog.close();
+  }
+
+  // 刷新账户状态时，若小窗还开着就跟着换一份新数据（例如在窗口外点了「刷新积分」）。
+  function refreshPackagesDialog() {
+    if (!elements.packagesDialog?.open || !app.packagesAccountId) return;
+    const account = getAccountById(app.packagesAccountId);
+    if (account) {
+      openPackagesDialog(account);
+    } else {
+      closePackagesDialog();
     }
   }
 
@@ -1893,6 +2016,8 @@
       const action = button.dataset.action;
       if (action === "edit") {
         openEditDialog(account);
+      } else if (action === "packages") {
+        openPackagesDialog(account);
       } else if (action === "delete") {
         const confirmed = window.confirm(`确定删除“${accountDisplayName(account)}”吗？此操作无法撤销。`);
         if (confirmed) runAccountAction(account, "delete");
@@ -1953,6 +2078,15 @@
     });
     elements.editDialog.addEventListener("close", () => {
       app.editingAccountId = "";
+    });
+
+    elements.closePackages?.addEventListener("click", closePackagesDialog);
+    // 点击遮罩关闭（dialog 自身就是遮罩区域，卡片内的点击不会命中）
+    elements.packagesDialog?.addEventListener("click", (event) => {
+      if (event.target === elements.packagesDialog) closePackagesDialog();
+    });
+    elements.packagesDialog?.addEventListener("close", () => {
+      app.packagesAccountId = "";
     });
 
     document.addEventListener("keydown", (event) => {

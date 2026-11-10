@@ -490,6 +490,21 @@
       </form>
     </dialog>
 
+    <dialog class="modal modal-small" id="packages-dialog" aria-labelledby="packages-title">
+      <div class="modal-card package-card">
+        <div class="package-header">
+          <div class="package-heading">
+            <h2 id="packages-title">全部积分包</h2>
+            <p id="packages-subtitle">共 0 个积分包</p>
+          </div>
+          <button class="icon-button modal-close" id="close-packages" type="button" aria-label="关闭积分包窗口" data-tooltip="关闭">
+            <i data-lucide="x" aria-hidden="true"></i>
+          </button>
+        </div>
+        <div class="package-list" id="package-list" role="list" tabindex="0" autofocus aria-label="积分包明细"></div>
+      </div>
+    </dialog>
+
     <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
 
     <noscript>
