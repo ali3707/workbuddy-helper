@@ -1246,12 +1246,17 @@
                 </div>
               </div>
               <div class="package-bar" aria-hidden="true">
-                <span class="package-bar-fill${tone}" style="width: ${ratio.toFixed(2)}%"></span>
+                <span class="package-bar-fill${tone}" data-ratio="${ratio.toFixed(2)}"></span>
               </div>
             </div>
           `;
         })
         .join("");
+      // 页面 CSP 是 style-src 'self'，HTML 里的内联 style 属性会被浏览器丢弃（进度条会变成满格），
+      // 所以宽度改由 CSSOM 赋值——CSP 不拦脚本设置 el.style。
+      elements.packageList.querySelectorAll(".package-bar-fill[data-ratio]").forEach((bar) => {
+        bar.style.width = `${bar.dataset.ratio}%`;
+      });
     }
 
     if (!elements.packagesDialog.open) elements.packagesDialog.showModal();
